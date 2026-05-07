@@ -66,10 +66,14 @@ const crearConfiguracionSchema = Joi.object({
     'any.required': 'El usuario de Hacienda es requerido.',
     'string.min':   'El usuario debe tener al menos 5 caracteres.',
   }),
-  password_hacienda: Joi.string().min(13).max(25).required().messages({
-    'any.required': 'La contraseña de Hacienda es requerida.',
-    'string.min':   'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
-    'string.max':   'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
+  password_hacienda: Joi.string().min(13).max(25)
+  .pattern(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{13,25}$/)
+  .required()
+  .messages({
+    'any.required':        'La contraseña de Hacienda es requerida.',
+    'string.min':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
+    'string.max':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
+    'string.pattern.base': 'La contraseña de Hacienda debe contener letras, números y al menos un carácter especial.',
   }),
 
   // Ambiente: 00 = pruebas, 01 = producción
