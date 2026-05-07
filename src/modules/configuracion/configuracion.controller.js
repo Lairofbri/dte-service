@@ -102,12 +102,18 @@ const testHacienda = async (req, res) => {
       mensaje:  'Las credenciales de Hacienda son válidas.',
       // NO incluir el token en la respuesta
     });
-  } catch (err) {
+  }   catch (err) {
+    // Error controlado del service (ej: credenciales inválidas → 400)
     if (err.status && err.mensaje) {
       return error(res, err.mensaje, err.status);
     }
+    // Error de credenciales rechazadas por Hacienda → problema del cliente
+    if (err.response && err.response.status === 401) {
+      return error(res, 'Credenciales de Hacienda inválidas. Verifica usuario y contraseña.', 400);
+    }
+    // Error de conexión o timeout → problema del servidor/red
     logger.error('Error al probar conexión con Hacienda', { error: err.message });
-    return error(res, 'No se pudo conectar con Hacienda. Verifica las credenciales.', 400);
+    return errorServidor(res, 'No se pudo conectar con Hacienda. Intenta más tarde.');
   }
 };
 

@@ -111,32 +111,39 @@ const obtenerCredencialesHacienda = async () => {
  * Las credenciales se encriptan antes de guardar
  */
 const crearConfiguracion = async ({ datos }) => {
-  // Verificar que no existe configuración previa
-  // Enforzado también en BD con LIMIT 1 implícito por diseño de instancia única
-  const { rows: existe } = await query('SELECT id FROM configuracion LIMIT 1');
-  if (existe.length > 0) {
-    throw {
-      status: 409,
-      mensaje: 'Ya existe una configuración. Usa PATCH para actualizar.',
-    };
-  }
-
-  const {
-    nit, nrc, nombre, nombre_comercial,
-    direccion, telefono, email,
-    codigo_actividad, codigo_establecimiento,
-    codigo_punto_venta, tipo_establecimiento,
-    usuario_hacienda, password_hacienda,
-    ambiente,
-  } = datos;
-
-  // SEGURIDAD: encriptar credenciales ANTES de guardar en BD
-  const usuarioEncriptado  = encriptar(usuario_hacienda);
-  const passwordEncriptado = encriptar(password_hacienda);
-
   const client = await getClient();
   try {
     await client.query('BEGIN');
+
+    // Fix CUBIC: bloquear la tabla ANTES de verificar existencia
+    // Evita race condition TOCTOU — ningún otro proceso puede insertar
+    // mientras este tiene el lock exclusivo
+    await client.query('LOCK TABLE configuracion IN EXCLUSIVE MODE');
+
+    // Verificar existencia DENTRO de la transacción con el lock activo
+    const { rows: existe } = await client.query(
+      'SELECT id FROM configuracion LIMIT 1'
+    );
+    if (existe.length > 0) {
+      await client.query('ROLLBACK');
+      throw {
+        status: 409,
+        mensaje: 'Ya existe una configuración. Usa PATCH para actualizar.',
+      };
+    }
+
+    const {
+      nit, nrc, nombre, nombre_comercial,
+      direccion, telefono, email,
+      codigo_actividad, codigo_establecimiento,
+      codigo_punto_venta, tipo_establecimiento,
+      usuario_hacienda, password_hacienda,
+      ambiente,
+    } = datos;
+
+    // SEGURIDAD: encriptar credenciales ANTES de guardar en BD
+    const usuarioEncriptado  = encriptar(usuario_hacienda);
+    const passwordEncriptado = encriptar(password_hacienda);
 
     const { rows } = await client.query(
       `INSERT INTO configuracion (

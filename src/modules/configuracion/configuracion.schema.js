@@ -96,7 +96,14 @@ const actualizarConfiguracionSchema = Joi.object({
   codigo_punto_venta:     Joi.string().length(4).optional(),
   tipo_establecimiento:   Joi.string().max(2).optional(),
   usuario_hacienda:       Joi.string().min(5).max(20).optional(),
-  password_hacienda:      Joi.string().min(13).max(25).optional(),
+  password_hacienda: Joi.string().min(13).max(25)
+  .pattern(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{13,25}$/)
+  .optional()
+  .messages({
+    'string.min':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
+    'string.max':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
+    'string.pattern.base': 'La contraseña de Hacienda debe contener letras, números y al menos un carácter especial.',
+  }),
   ambiente:               Joi.string().valid('00', '01').optional(),
 }).min(1).messages({
   'object.min': 'Debe enviar al menos un campo para actualizar.',
