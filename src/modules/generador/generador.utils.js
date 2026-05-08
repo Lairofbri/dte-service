@@ -82,18 +82,23 @@ const formatearNRC = (nrc) => {
   return nrc.replace(/-/g, '');
 };
 
-/**
- * Obtiene la fecha actual en formato YYYY-MM-DD
- */
-const getFechaEmision = () => {
-  return new Date().toISOString().split('T')[0];
+// DESPUÉS — ambas usan la hora local de El Salvador (UTC-6)
+// Se usa una sola instancia de Date para garantizar consistencia
+// entre fecha y hora del mismo momento
+
+const getDateElSalvador = () => {
+  // El Salvador está en UTC-6 (sin horario de verano)
+  const ahora     = new Date();
+  const offsetMs  = -6 * 60 * 60 * 1000; // UTC-6 en milisegundos
+  return new Date(ahora.getTime() + offsetMs);
 };
 
-/**
- * Obtiene la hora actual en formato HH:mm:ss
- */
+const getFechaEmision = () => {
+  return getDateElSalvador().toISOString().split('T')[0];
+};
+
 const getHoraEmision = () => {
-  return new Date().toTimeString().split(' ')[0];
+  return getDateElSalvador().toISOString().split('T')[1].split('.')[0];
 };
 
 /**
@@ -120,10 +125,15 @@ const numeroALetras = (monto) => {
   const centenas = ['', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS',
     'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
 
+  const veintiunos = ['', 'VEINTIÚN', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO',
+  'VEINTICINCO', 'VEINTISÉIS', 'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
+
   const convertirMenorMil = (n) => {
     if (n === 0) return '';
     if (n === 100) return 'CIEN';
     if (n < 20) return unidades[n];
+    // Caso especial: 21-29 son palabras compuestas en español
+    if (n >= 21 && n <= 29) return veintiunos[n - 20];
     if (n < 100) {
       const d = Math.floor(n / 10);
       const u = n % 10;
@@ -173,10 +183,23 @@ const numeroALetras = (monto) => {
  * @param {string} codigoEstablecimiento — 4 dígitos del establecimiento
  * @returns {{ numeroControl: string, correlativo: number }}
  */
+// DESPUÉS — SELECT FOR UPDATE bloquea solo la fila del tipo específico
 const obtenerSiguienteCorrelativo = async (client, tipoDte, ambiente, codigoEstablecimiento) => {
-  // LOCK para evitar race condition — dos DTEs del mismo tipo no pueden
-  // tener el mismo correlativo
-  await client.query('LOCK TABLE correlativos IN EXCLUSIVE MODE');
+  // Bloquear solo la fila del tipo de DTE específico
+  // Permite que otros tipos de DTE se generen en paralelo
+  const { rows: lockRows } = await client.query(
+    `SELECT id FROM correlativos
+     WHERE tipo_dte = $1 AND ambiente = $2
+     FOR UPDATE`,
+    [tipoDte, ambiente]
+  );
+
+  if (lockRows.length === 0) {
+    throw {
+      status: 500,
+      mensaje: `No hay correlativo configurado para tipo DTE ${tipoDte} en ambiente ${ambiente}.`,
+    };
+  }
 
   const { rows } = await client.query(
     `UPDATE correlativos
@@ -186,13 +209,6 @@ const obtenerSiguienteCorrelativo = async (client, tipoDte, ambiente, codigoEsta
      RETURNING ultimo_numero`,
     [tipoDte, ambiente]
   );
-
-  if (rows.length === 0) {
-    throw {
-      status: 500,
-      mensaje: `No hay correlativo configurado para tipo DTE ${tipoDte} en ambiente ${ambiente}.`,
-    };
-  }
 
   const correlativo = rows[0].ultimo_numero;
 

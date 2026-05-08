@@ -65,8 +65,15 @@ const construirCuerpoDocumento = (items, tipoDte) => {
 
     // Para FCF (01): precio incluye IVA, ventaGravada = precio - descuento
     // Para CCF (03): precio sin IVA, IVA se calcula en resumen
-    // Los precios en el POS SIEMPRE incluyen IVA
-    const ventaGravada = redondear8((precioConIva * item.cantidad) - descuentoItem);
+    // DESPUÉS — FCF con IVA incluido, CCF sin IVA
+    const montoBase    = redondear8(precioConIva * item.cantidad);
+    const montoConDesc = redondear8(montoBase - descuentoItem);
+
+// FCF (01): precio incluye IVA — ventaGravada con IVA
+// CCF (03), NC (05), ND (06): precio sin IVA — Hacienda calcula el IVA en el resumen
+    const ventaGravada = tipoDte === '01'
+    ? montoConDesc
+    : redondear8(montoConDesc / 1.13);
 
     return {
       numItem:         idx + 1,
@@ -85,9 +92,9 @@ const construirCuerpoDocumento = (items, tipoDte) => {
       tributos:        ventaGravada > 0 ? ['20'] : null, // 20 = IVA
       psv:             0,
       noGravado:       0,
-      ivaItem:         tipoDte === '01'
-        ? redondear8(ventaGravada - (ventaGravada / 1.13))
-        : 0, // FCF incluye ivaItem, CCF no
+      ivaItem: tipoDte === '01'
+                ? redondear8(montoConDesc - (montoConDesc / 1.13))
+                : 0,
     };
   });
 };
@@ -513,10 +520,13 @@ const generarFSE = async (datos) => {
       compra:      redondear8((item.precio_unitario * item.cantidad) - (item.descuento || 0)),
     }));
 
-    const totalCompra = redondear2(cuerpoDocumento.reduce((s, i) => s + i.compra, 0));
+    // totalCompra = suma de compra (ya tiene descuentos aplicados por item)
+    // subTotal    = totalCompra (no descontar de nuevo)
+    // totalDescu  = suma de descuentos (solo para reportarlo en el resumen)
     const totalDescu  = redondear2(cuerpoDocumento.reduce((s, i) => s + i.montoDescu, 0));
-    const subTotal    = redondear2(totalCompra - totalDescu);
+    const totalCompra = redondear2(cuerpoDocumento.reduce((s, i) => s + i.compra, 0));
     const totalPagar  = subTotal;
+    const subTotal    = totalCompra; // ya tiene los descuentos aplicados
 
     const pagos = construirPagos(
       datos.metodoPago, datos.montoEfectivo || 0, datos.montoTarjeta || 0, totalPagar

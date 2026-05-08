@@ -24,9 +24,11 @@ ALTER TABLE configuracion
   ADD CONSTRAINT chk_departamento_cod
   CHECK (departamento_cod ~ '^(0[1-9]|1[0-4])$');
 
+-- DESPUÉS — mínimo 01, máximo 99
 ALTER TABLE configuracion
   ADD CONSTRAINT chk_municipio_cod
-  CHECK (municipio_cod ~ '^[0-9]{2}$');
+  CHECK (municipio_cod ~ '^(0[1-9]|[1-9][0-9])$');
+
 
 -- ─────────────────────────────────────────────
 -- FIN DE MIGRACIÓN
