@@ -42,15 +42,19 @@ const verificarEstado = async (req, res) => {
   try {
     const resultado = await service.verificarFirmador();
 
+    // DESPUÉS
     if (!resultado.disponible) {
-      return error(res, resultado.mensaje, 503);
+    // Loguear el mensaje técnico internamente
+      logger.warn('Firmador no disponible', { mensaje: resultado.mensaje });
+      // Devolver mensaje genérico al cliente
+      return error(res, 'El servicio de firma no está disponible en este momento.', 503);
     }
 
-    return exito(res, {
-      disponible: true,
-      url:        process.env.URL_FIRMADOR,
-      mensaje:    resultado.mensaje,
-    });
+return exito(res, {
+  disponible: true,
+  // No exponer la URL interna del firmador al cliente
+  mensaje: 'El servicio de firma está disponible.',
+});
   } catch (err) {
     return manejarError(res, err);
   }

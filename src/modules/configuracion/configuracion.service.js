@@ -34,6 +34,9 @@ const formatearParaRespuesta = (row) => ({
   codigo_establecimiento: row.codigo_establecimiento,
   codigo_punto_venta:     row.codigo_punto_venta,
   tipo_establecimiento:   row.tipo_establecimiento,
+  departamento_cod:       row.departamento_cod,
+  municipio_cod:          row.municipio_cod,
+  desc_actividad:         row.desc_actividad,
   ambiente:               row.ambiente,
   ambiente_descripcion:   row.ambiente === '00' ? 'Pruebas' : 'Producción',
   // Mostrar si tiene credenciales configuradas pero NO las credenciales
@@ -63,6 +66,7 @@ const obtenerConfiguracion = async () => {
        codigo_actividad, codigo_establecimiento,
        codigo_punto_venta, tipo_establecimiento,
        ambiente,
+       departamento_cod, municipio_cod, desc_actividad,
        usuario_hacienda, password_hacienda,
        token_hacienda, token_expira_en,
        activo, creado_en, actualizado_en

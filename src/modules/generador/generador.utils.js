@@ -82,24 +82,32 @@ const formatearNRC = (nrc) => {
   return nrc.replace(/-/g, '');
 };
 
-// DESPUÉS — ambas usan la hora local de El Salvador (UTC-6)
-// Se usa una sola instancia de Date para garantizar consistencia
-// entre fecha y hora del mismo momento
-
-const getDateElSalvador = () => {
-  // El Salvador está en UTC-6 (sin horario de verano)
-  const ahora     = new Date();
-  const offsetMs  = -6 * 60 * 60 * 1000; // UTC-6 en milisegundos
-  return new Date(ahora.getTime() + offsetMs);
+/**
+ * Obtiene la fecha y hora actual en zona horaria de El Salvador (UTC-6)
+ * Usa UNA SOLA instancia de Date para garantizar consistencia
+ * entre fecEmi y horEmi — evita inconsistencias en cambios de día
+ */
+const getFechaHoraEmision = () => {
+  const ahora    = new Date();
+  const offsetMs = -6 * 60 * 60 * 1000; // UTC-6 El Salvador (sin horario de verano)
+  const sv       = new Date(ahora.getTime() + offsetMs).toISOString();
+  return {
+    fecEmi: sv.split('T')[0],
+    horEmi: sv.split('T')[1].split('.')[0],
+  };
 };
 
-const getFechaEmision = () => {
-  return getDateElSalvador().toISOString().split('T')[0];
-};
+/**
+ * Obtiene solo la fecha en formato YYYY-MM-DD (zona horaria El Salvador)
+ * Mantenido por compatibilidad — preferir getFechaHoraEmision()
+ */
+const getFechaEmision = () => getFechaHoraEmision().fecEmi;
 
-const getHoraEmision = () => {
-  return getDateElSalvador().toISOString().split('T')[1].split('.')[0];
-};
+/**
+ * Obtiene solo la hora en formato HH:mm:ss (zona horaria El Salvador)
+ * Mantenido por compatibilidad — preferir getFechaHoraEmision()
+ */
+const getHoraEmision = () => getFechaHoraEmision().horEmi;
 
 /**
  * Redondea un número a 8 decimales (precisión de los esquemas)
@@ -125,8 +133,11 @@ const numeroALetras = (monto) => {
   const centenas = ['', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS',
     'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
 
-  const veintiunos = ['', 'VEINTIÚN', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO',
-  'VEINTICINCO', 'VEINTISÉIS', 'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
+  // Números 21-29 en español son palabras compuestas — requerido para documentos fiscales
+  const veintiunos = [
+    '', 'VEINTIÚN', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO',
+    'VEINTICINCO', 'VEINTISÉIS', 'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE',
+  ];
 
   const convertirMenorMil = (n) => {
     if (n === 0) return '';
@@ -183,10 +194,9 @@ const numeroALetras = (monto) => {
  * @param {string} codigoEstablecimiento — 4 dígitos del establecimiento
  * @returns {{ numeroControl: string, correlativo: number }}
  */
-// DESPUÉS — SELECT FOR UPDATE bloquea solo la fila del tipo específico
 const obtenerSiguienteCorrelativo = async (client, tipoDte, ambiente, codigoEstablecimiento) => {
-  // Bloquear solo la fila del tipo de DTE específico
-  // Permite que otros tipos de DTE se generen en paralelo
+  // SELECT FOR UPDATE — bloquea solo la fila del tipo de DTE específico
+  // Permite que otros tipos de DTE se generen en paralelo sin bloquearse
   const { rows: lockRows } = await client.query(
     `SELECT id FROM correlativos
      WHERE tipo_dte = $1 AND ambiente = $2
@@ -247,8 +257,7 @@ const construirIdentificacion = ({
   tipoOperacion:    esContingencia ? 2 : 1,
   tipoContingencia: esContingencia ? tipoContingencia : null,
   motivoContin:     esContingencia ? motivoContingencia : null,
-  fecEmi:           getFechaEmision(),
-  horEmi:           getHoraEmision(),
+  ...(() => { const { fecEmi, horEmi } = getFechaHoraEmision(); return { fecEmi, horEmi }; })(),
   tipoMoneda:       'USD',
 });
 
@@ -340,6 +349,7 @@ module.exports = {
   generarCodigoGeneracion,
   formatearNIT,
   formatearNRC,
+  getFechaHoraEmision,
   getFechaEmision,
   getHoraEmision,
   redondear8,

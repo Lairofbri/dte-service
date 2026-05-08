@@ -141,25 +141,36 @@ const generarFCF = async (datos) => {
       resumenCalc.totalPagar
     );
 
-    // Receptor — requerido si monto >= $1,095 según esquema
-    let receptor = null;
-    if (datos.receptor || resumenCalc.montoTotalOperacion >= 1095) {
-      receptor = {
-        tipoDocumento:  datos.receptor?.tipo_documento || null,
-        numDocumento:   datos.receptor?.numero_documento || null,
-        nrc:            null,
-        nombre:         datos.receptor?.nombre || datos.receptor?.razon_social || null,
-        codActividad:   null,
-        descActividad:  null,
-        direccion:      datos.receptor?.departamento_cod ? {
-          departamento: datos.receptor.departamento_cod,
-          municipio:    datos.receptor.municipio_cod,
-          complemento:  datos.receptor.direccion,
-        } : null,
-        telefono:       datos.receptor?.telefono || null,
-        correo:         datos.receptor?.email    || null,
+    // Validar ANTES de construir el receptor
+    if (resumenCalc.montoTotalOperacion >= 1095 && !datos.receptor?.nombre) {
+      throw {
+        status: 400,
+        mensaje: `Para ventas mayores a $1,095.00 se requieren los datos del receptor (nombre y documento). Total: $${resumenCalc.montoTotalOperacion}`,
       };
     }
+
+    let receptor = null;
+    if (datos.receptor) {
+      // Validar campos requeridos del receptor
+      if (!datos.receptor.nombre) {
+        throw { status: 400, mensaje: 'El nombre del receptor es requerido.' };
+      }
+
+      receptor = {
+      tipoDocumento:  datos.receptor.tipo_documento    || null,
+      numDocumento:   datos.receptor.numero_documento  || null,
+      nrc:            null,
+      nombre:         datos.receptor.nombre || datos.receptor.razon_social,
+      codActividad:   null,
+      descActividad:  null,
+      direccion:      datos.receptor.departamento_cod ? {
+        departamento: datos.receptor.departamento_cod,
+        municipio:    datos.receptor.municipio_cod,
+        complemento:  datos.receptor.direccion,} : null,
+      telefono:       datos.receptor.telefono || null,
+      correo:         datos.receptor.email    || null,
+  };
+}
 
     const json = {
       identificacion:    construirIdentificacion({
@@ -525,8 +536,9 @@ const generarFSE = async (datos) => {
     // totalDescu  = suma de descuentos (solo para reportarlo en el resumen)
     const totalDescu  = redondear2(cuerpoDocumento.reduce((s, i) => s + i.montoDescu, 0));
     const totalCompra = redondear2(cuerpoDocumento.reduce((s, i) => s + i.compra, 0));
-    const totalPagar  = subTotal;
     const subTotal    = totalCompra; // ya tiene los descuentos aplicados
+    const totalPagar  = subTotal;
+    
 
     const pagos = construirPagos(
       datos.metodoPago, datos.montoEfectivo || 0, datos.montoTarjeta || 0, totalPagar
