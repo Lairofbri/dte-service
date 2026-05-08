@@ -16,6 +16,7 @@ const dteRoutes           = require('./modules/dtes/dtes.routes');
 const contingenciaRoutes  = require('./modules/contingencia/contingencia.routes');
 const auditoriaRoutes     = require('./modules/auditoria/auditoria.routes');
 const haciendaRoutes      = require('./modules/hacienda/hacienda.routes');
+const firmadorRoutes      = require('./modules/firmador/firmador.routes');
 
 const app = express();
 
@@ -107,6 +108,7 @@ app.use('/api/dte',           limiteDTE, dteRoutes);
 app.use('/api/contingencia',  contingenciaRoutes);
 app.use('/api/auditoria',     auditoriaRoutes);
 app.use('/api/hacienda',      haciendaRoutes);
+app.use('/api/firmador',      firmadorRoutes);
 
 // ─────────────────────────────────────────────
 // 404 — Ruta no encontrada
