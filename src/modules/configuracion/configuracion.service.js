@@ -138,7 +138,7 @@ const crearConfiguracion = async ({ datos }) => {
       codigo_actividad, codigo_establecimiento,
       codigo_punto_venta, tipo_establecimiento,
       usuario_hacienda, password_hacienda,
-      ambiente,
+      ambiente,departamento_cod, municipio_cod, desc_actividad,
     } = datos;
 
     // SEGURIDAD: encriptar credenciales ANTES de guardar en BD
@@ -152,14 +152,15 @@ const crearConfiguracion = async ({ datos }) => {
          codigo_actividad, codigo_establecimiento,
          codigo_punto_venta, tipo_establecimiento,
          usuario_hacienda, password_hacienda,
-         ambiente
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ambiente, departamento_cod, municipio_cod, desc_actividad
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING
          id, nit, nrc, nombre, nombre_comercial,
          direccion, telefono, email,
          codigo_actividad, codigo_establecimiento,
          codigo_punto_venta, tipo_establecimiento,
-         ambiente, usuario_hacienda, password_hacienda,
+         ambiente, departamento_cod, municipio_cod, desc_actividad,
+         usuario_hacienda, password_hacienda,
          token_hacienda, token_expira_en,
          activo, creado_en, actualizado_en`,
       [
@@ -177,6 +178,9 @@ const crearConfiguracion = async ({ datos }) => {
         usuarioEncriptado,
         passwordEncriptado,
         ambiente               || '00',
+        departamento_cod       || '06',
+        municipio_cod          || '14',
+        desc_actividad         || null,
       ]
     );
 
@@ -212,7 +216,7 @@ const actualizarConfiguracion = async ({ datos }) => {
     'direccion', 'telefono', 'email',
     'codigo_actividad', 'codigo_establecimiento',
     'codigo_punto_venta', 'tipo_establecimiento',
-    'ambiente',
+    'ambiente', 'departamento_cod', 'municipio_cod', 'desc_actividad',
   ];
 
   const campos  = [];
@@ -261,7 +265,8 @@ const actualizarConfiguracion = async ({ datos }) => {
        direccion, telefono, email,
        codigo_actividad, codigo_establecimiento,
        codigo_punto_venta, tipo_establecimiento,
-       ambiente, usuario_hacienda, password_hacienda,
+       ambiente, departamento_cod, municipio_cod, desc_actividad,
+       usuario_hacienda, password_hacienda,
        token_hacienda, token_expira_en,
        activo, creado_en, actualizado_en`,
     valores

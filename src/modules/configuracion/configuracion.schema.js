@@ -80,6 +80,22 @@ const crearConfiguracionSchema = Joi.object({
   ambiente: Joi.string().valid('00', '01').optional().default('00').messages({
     'any.only': 'El ambiente debe ser 00 (pruebas) o 01 (producción).',
   }),
+  // Códigos de ubicación según catálogo de Hacienda
+// Requeridos para construir la dirección del emisor en el JSON DTE
+  departamento_cod: Joi.string().length(2).pattern(/^(0[1-9]|1[0-4])$/)
+  .optional().default('06').messages({
+    'string.pattern.base': 'El código de departamento debe ser del 01 al 14.',
+    'string.length':       'El código de departamento debe tener 2 dígitos.',
+  }),
+  municipio_cod: Joi.string().length(2).pattern(/^[0-9]{2}$/)
+  .optional().default('14').messages({
+    'string.pattern.base': 'El código de municipio debe ser numérico de 2 dígitos.',
+    'string.length':       'El código de municipio debe tener 2 dígitos.',
+  }),
+// Descripción de la actividad económica (requerida en el JSON DTE)
+  desc_actividad: Joi.string().min(5).max(150).optional().allow('', null).messages({
+  'string.min': 'La descripción de actividad debe tener al menos 5 caracteres.',
+  }),
 });
 
 // ─────────────────────────────────────────────
@@ -109,6 +125,22 @@ const actualizarConfiguracionSchema = Joi.object({
     'string.pattern.base': 'La contraseña de Hacienda debe contener letras, números y al menos un carácter especial.',
   }),
   ambiente:               Joi.string().valid('00', '01').optional(),
+  // Códigos de ubicación según catálogo de Hacienda
+// Requeridos para construir la dirección del emisor en el JSON DTE
+  departamento_cod: Joi.string().length(2).pattern(/^(0[1-9]|1[0-4])$/)
+  .optional().default('06').messages({
+    'string.pattern.base': 'El código de departamento debe ser del 01 al 14.',
+    'string.length':       'El código de departamento debe tener 2 dígitos.',
+  }),
+  municipio_cod: Joi.string().length(2).pattern(/^[0-9]{2}$/)
+  .optional().default('14').messages({
+    'string.pattern.base': 'El código de municipio debe ser numérico de 2 dígitos.',
+    'string.length':       'El código de municipio debe tener 2 dígitos.',
+  }),
+// Descripción de la actividad económica (requerida en el JSON DTE)
+  desc_actividad: Joi.string().min(5).max(150).optional().allow('', null).messages({
+  'string.min': 'La descripción de actividad debe tener al menos 5 caracteres.',
+  }),
 }).min(1).messages({
   'object.min': 'Debe enviar al menos un campo para actualizar.',
 });
