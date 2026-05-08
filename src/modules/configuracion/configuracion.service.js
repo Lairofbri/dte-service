@@ -330,6 +330,7 @@ const obtenerTokenHacienda = async () => {
 };
 
 module.exports = {
+  obtenerConfiguracion, 
   obtenerConfiguracionPublica,
   obtenerCredencialesHacienda,
   obtenerTokenHacienda,
