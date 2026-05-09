@@ -65,15 +65,8 @@ const construirCuerpoDocumento = (items, tipoDte) => {
 
     // Para FCF (01): precio incluye IVA, ventaGravada = precio - descuento
     // Para CCF (03): precio sin IVA, IVA se calcula en resumen
-    // DESPUÉS — FCF con IVA incluido, CCF sin IVA
-    const montoBase    = redondear8(precioConIva * item.cantidad);
-    const montoConDesc = redondear8(montoBase - descuentoItem);
-
-// FCF (01): precio incluye IVA — ventaGravada con IVA
-// CCF (03), NC (05), ND (06): precio sin IVA — Hacienda calcula el IVA en el resumen
-    const ventaGravada = tipoDte === '01'
-    ? montoConDesc
-    : redondear8(montoConDesc / 1.13);
+    // Los precios en el POS SIEMPRE incluyen IVA
+    const ventaGravada = redondear8((precioConIva * item.cantidad) - descuentoItem);
 
     return {
       numItem:         idx + 1,
@@ -92,9 +85,9 @@ const construirCuerpoDocumento = (items, tipoDte) => {
       tributos:        ventaGravada > 0 ? ['20'] : null, // 20 = IVA
       psv:             0,
       noGravado:       0,
-      ivaItem: tipoDte === '01'
-                ? redondear8(montoConDesc - (montoConDesc / 1.13))
-                : 0,
+      ivaItem:         tipoDte === '01'
+        ? redondear8(ventaGravada - (ventaGravada / 1.13))
+        : 0, // FCF incluye ivaItem, CCF no
     };
   });
 };
@@ -110,12 +103,12 @@ const construirCuerpoDocumento = (items, tipoDte) => {
  * @param {object} datos
  * @param {Array}  datos.items        — items de la orden
  * @param {object} datos.receptor     — datos del receptor (opcional para montos < $1,095)
- * @param {string} datos.metodoPago   — efectivo | tarjeta | mixto
- * @param {number} datos.montoEfectivo
- * @param {number} datos.montoTarjeta
- * @param {number} datos.porcentajeDescuento
- * @param {string} datos.ordenReferencia — ID de la orden en el POS
- * @param {boolean} datos.esContingencia
+ * @param {string} datos.metodopago   — efectivo | tarjeta | mixto
+ * @param {number} datos.montoefectivo
+ * @param {number} datos.montotarjeta
+ * @param {number} datos.porcentajedescuento
+ * @param {string} datos.ordenreferencia — ID de la orden en el POS
+ * @param {boolean} datos.escontingencia
  */
 const generarFCF = async (datos) => {
   const config = await configuracionService.obtenerConfiguracion();
@@ -133,44 +126,64 @@ const generarFCF = async (datos) => {
 
     const codigoGeneracion = generarCodigoGeneracion();
     const cuerpoDocumento  = construirCuerpoDocumento(datos.items, '01');
-    const resumenCalc      = calcularResumen(cuerpoDocumento, datos.porcentajeDescuento || 0);
+    const resumenCalc      = calcularResumen(cuerpoDocumento, datos.porcentajedescuento || 0);
     const pagos            = construirPagos(
-      datos.metodoPago,
-      datos.montoEfectivo || 0,
-      datos.montoTarjeta  || 0,
+      datos.metodopago,
+      datos.montoefectivo || 0,
+      datos.montotarjeta  || 0,
       resumenCalc.totalPagar
     );
 
-    // Validar ANTES de construir el receptor
-    if (resumenCalc.montoTotalOperacion >= 1095 && !datos.receptor?.nombre) {
-      throw {
-        status: 400,
-        mensaje: `Para ventas mayores a $1,095.00 se requieren los datos del receptor (nombre y documento). Total: $${resumenCalc.montoTotalOperacion}`,
-      };
+    // Receptor — requerido si monto >= $1,095 según esquema FCF (fe-fc-v1.json)
+    // Cuando monto >= $1,095: tipoDocumento, numDocumento y nombre deben ser strings
+    let receptor = null;
+
+    if (resumenCalc.montoTotalOperacion >= 1095) {
+      // Aceptar nombre O razon_social — en El Salvador las empresas usan razon_social
+      const nombreReceptor = datos.receptor?.nombre || datos.receptor?.razon_social;
+      if (!nombreReceptor) {
+        throw {
+          status: 400,
+          mensaje: `Para ventas mayores a $1,095.00 el nombre o razón social del receptor es requerido. Total: $${resumenCalc.montoTotalOperacion}`,
+        };
+      }
+      if (!datos.receptor?.tipo_documento) {
+        throw {
+          status: 400,
+          mensaje: `Para ventas mayores a $1,095.00 el tipo de documento del receptor es requerido.`,
+        };
+      }
+      if (!datos.receptor?.numero_documento) {
+        throw {
+          status: 400,
+          mensaje: `Para ventas mayores a $1,095.00 el número de documento del receptor es requerido.`,
+        };
+      }
     }
 
-    let receptor = null;
     if (datos.receptor) {
-      // Validar campos requeridos del receptor
-      if (!datos.receptor.nombre) {
-        throw { status: 400, mensaje: 'El nombre del receptor es requerido.' };
+      // Aceptar nombre O razon_social
+      const nombreReceptor = datos.receptor.nombre || datos.receptor.razon_social;
+      if (!nombreReceptor) {
+        throw { status: 400, mensaje: 'El nombre o razón social del receptor es requerido.' };
       }
 
       receptor = {
-      tipoDocumento:  datos.receptor.tipo_documento    || null,
-      numDocumento:   datos.receptor.numero_documento  || null,
-      nrc:            null,
-      nombre:         datos.receptor.nombre || datos.receptor.razon_social,
-      codActividad:   null,
-      descActividad:  null,
-      direccion:      datos.receptor.departamento_cod ? {
-        departamento: datos.receptor.departamento_cod,
-        municipio:    datos.receptor.municipio_cod,
-        complemento:  datos.receptor.direccion,} : null,
-      telefono:       datos.receptor.telefono || null,
-      correo:         datos.receptor.email    || null,
-  };
-}
+        tipoDocumento:  datos.receptor.tipo_documento    || null,
+        numDocumento:   datos.receptor.numero_documento  || null,
+        nrc:            null,
+        nombre:         nombreReceptor,
+        codActividad:   null,
+        descActividad:  null,
+        direccion:      datos.receptor.departamento_cod ? {
+          departamento: datos.receptor.departamento_cod,
+          municipio:    datos.receptor.municipio_cod,
+          complemento:  datos.receptor.direccion,
+        } : null,
+        telefono:       datos.receptor.telefono || null,
+        correo:         datos.receptor.email    || null,
+      };
+    }
 
     const json = {
       identificacion:    construirIdentificacion({
@@ -178,9 +191,9 @@ const generarFCF = async (datos) => {
         numeroControl,
         codigoGeneracion,
         ambiente:          config.ambiente,
-        esContingencia:    datos.esContingencia || false,
-        tipoContingencia:  datos.tipoContingencia || null,
-        motivoContingencia: datos.motivoContingencia || null,
+        esContingencia:    datos.escontingencia || false,
+        tipoContingencia:  datos.tipocontingencia || null,
+        motivoContingencia: datos.motivocontingencia || null,
       }),
       documentoRelacionado: null,
       emisor:            construirEmisor(config),
@@ -249,11 +262,11 @@ const generarCCF = async (datos) => {
 
     const codigoGeneracion = generarCodigoGeneracion();
     const cuerpoDocumento  = construirCuerpoDocumento(datos.items, '03');
-    const resumenCalc      = calcularResumen(cuerpoDocumento, datos.porcentajeDescuento || 0);
+    const resumenCalc      = calcularResumen(cuerpoDocumento, datos.porcentajedescuento || 0);
     const pagos            = construirPagos(
-      datos.metodoPago,
-      datos.montoEfectivo || 0,
-      datos.montoTarjeta  || 0,
+      datos.metodopago,
+      datos.montoefectivo || 0,
+      datos.montotarjeta  || 0,
       resumenCalc.totalPagar
     );
 
@@ -280,9 +293,9 @@ const generarCCF = async (datos) => {
         numeroControl,
         codigoGeneracion,
         ambiente:          config.ambiente,
-        esContingencia:    datos.esContingencia || false,
-        tipoContingencia:  datos.tipoContingencia || null,
-        motivoContingencia: datos.motivoContingencia || null,
+        esContingencia:    datos.escontingencia || false,
+        tipoContingencia:  datos.tipocontingencia || null,
+        motivoContingencia: datos.motivocontingencia || null,
       }),
       documentoRelacionado: null,
       emisor:            construirEmisor(config),
@@ -531,14 +544,10 @@ const generarFSE = async (datos) => {
       compra:      redondear8((item.precio_unitario * item.cantidad) - (item.descuento || 0)),
     }));
 
-    // totalCompra = suma de compra (ya tiene descuentos aplicados por item)
-    // subTotal    = totalCompra (no descontar de nuevo)
-    // totalDescu  = suma de descuentos (solo para reportarlo en el resumen)
-    const totalDescu  = redondear2(cuerpoDocumento.reduce((s, i) => s + i.montoDescu, 0));
     const totalCompra = redondear2(cuerpoDocumento.reduce((s, i) => s + i.compra, 0));
-    const subTotal    = totalCompra; // ya tiene los descuentos aplicados
+    const totalDescu  = redondear2(cuerpoDocumento.reduce((s, i) => s + i.montoDescu, 0));
+    const subTotal    = redondear2(totalCompra - totalDescu);
     const totalPagar  = subTotal;
-    
 
     const pagos = construirPagos(
       datos.metodoPago, datos.montoEfectivo || 0, datos.montoTarjeta || 0, totalPagar
