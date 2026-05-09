@@ -95,6 +95,33 @@ const notificarContingenciaSchema = Joi.object({
   password_pri: Joi.string().min(1).required().messages({
     'any.required': 'La contraseña del certificado (password_pri) es requerida para firmar el evento.',
   }),
+}).custom((value, helpers) => {
+  // Construir timestamps completos para comparar correctamente
+  // Combinar fecha + hora para comparar el momento exacto
+  const inicio = new Date(`${value.fecha_inicio}T${value.hora_inicio}`);
+  const fin    = new Date(`${value.fecha_fin}T${value.hora_fin}`);
+
+  if (isNaN(inicio.getTime())) {
+    return helpers.error('any.invalid', {
+      message: 'La fecha y hora de inicio no forman una fecha válida.',
+    });
+  }
+
+  if (isNaN(fin.getTime())) {
+    return helpers.error('any.invalid', {
+      message: 'La fecha y hora de fin no forman una fecha válida.',
+    });
+  }
+
+  if (fin <= inicio) {
+    return helpers.error('any.invalid', {
+      message: 'La fecha y hora de fin debe ser posterior a la fecha y hora de inicio.',
+    });
+  }
+
+  return value;
+}).messages({
+  'any.invalid': '{{#message}}',
 });
 
 module.exports = { notificarContingenciaSchema };
