@@ -96,22 +96,35 @@ const notificarContingenciaSchema = Joi.object({
     'any.required': 'La contraseña del certificado (password_pri) es requerida para firmar el evento.',
   }),
 }).custom((value, helpers) => {
-  // Construir timestamps completos para comparar correctamente
-  // Combinar fecha + hora para comparar el momento exacto
+  // Validar que la fecha no fue normalizada por JS
+  // JS normaliza fechas imposibles: 2024-02-31 → 2024-03-02
+  // en lugar de fallar — hay que verificar que día/mes no cambiaron
+  const validarFechaExacta = (fecha, hora) => {
+    const dt = new Date(`${fecha}T${hora}`);
+    if (isNaN(dt.getTime())) return false;
+
+    const [anio, mes, dia] = fecha.split('-').map(Number);
+    return (
+      dt.getFullYear() === anio &&
+      dt.getMonth() + 1 === mes && // getMonth() es 0-based
+      dt.getDate()      === dia
+    );
+  };
+
+  if (!validarFechaExacta(value.fecha_inicio, value.hora_inicio)) {
+    return helpers.error('any.invalid', {
+      message: `fecha_inicio "${value.fecha_inicio}" no es una fecha de calendario válida.`,
+    });
+  }
+
+  if (!validarFechaExacta(value.fecha_fin, value.hora_fin)) {
+    return helpers.error('any.invalid', {
+      message: `fecha_fin "${value.fecha_fin}" no es una fecha de calendario válida.`,
+    });
+  }
+
   const inicio = new Date(`${value.fecha_inicio}T${value.hora_inicio}`);
   const fin    = new Date(`${value.fecha_fin}T${value.hora_fin}`);
-
-  if (isNaN(inicio.getTime())) {
-    return helpers.error('any.invalid', {
-      message: 'La fecha y hora de inicio no forman una fecha válida.',
-    });
-  }
-
-  if (isNaN(fin.getTime())) {
-    return helpers.error('any.invalid', {
-      message: 'La fecha y hora de fin no forman una fecha válida.',
-    });
-  }
 
   if (fin <= inicio) {
     return helpers.error('any.invalid', {
