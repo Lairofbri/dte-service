@@ -59,6 +59,9 @@ CREATE TRIGGER trigger_configuracion_updated
 -- TABLA: correlativos
 -- Control de numeración por tipo de DTE y ambiente
 -- El correlativo es por tipo de DTE y nunca se repite
+-- MEJORA FUTURA: agregar columna establecimiento_id
+-- para soportar múltiples sucursales con correlativos independientes
+-- Ver comentario en generador.utils.js → obtenerSiguienteCorrelativo
 -- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS correlativos (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -194,6 +194,30 @@ const numeroALetras = (monto) => {
  * @param {string} codigoEstablecimiento — 4 dígitos del establecimiento
  * @returns {{ numeroControl: string, correlativo: number }}
  */
+
+/**
+ * Obtener y actualizar el siguiente correlativo para un tipo de DTE
+ * 
+ * MEJORA FUTURA — MULTI-ESTABLECIMIENTO:
+ * Actualmente el correlativo es por tipo_dte y ambiente solamente.
+ * Para empresas con múltiples sucursales/filiales se necesita:
+ * 
+ * 1. Tabla `establecimientos` con cod_estable_mh (asignado por Hacienda)
+ *    → Cada filial tiene su propio código asignado por Hacienda
+ *    → El numberControl usa ese código: DTE-01-{codEstableMH}-{correlativo}
+ * 
+ * 2. Tabla `correlativos` con columna establecimiento_id
+ *    → UNIQUE(tipo_dte, ambiente, establecimiento_id)
+ *    → Cada filial tiene su propio correlativo independiente
+ *    → Filial A: DTE-01-00000001-000000000000001
+ *    → Filial B: DTE-01-00000002-000000000000001
+ * 
+ * 3. El generador recibe establecimiento_id en cada solicitud
+ *    → El POS envía qué sucursal está emitiendo el DTE
+ * 
+ * Hacienda identifica la empresa por NIT y la sucursal por codEstableMH
+ * permitiendo correlativos independientes por filial bajo el mismo NIT.
+ */
 const obtenerSiguienteCorrelativo = async (client, tipoDte, ambiente, codigoEstablecimiento) => {
   // SELECT FOR UPDATE — bloquea solo la fila del tipo de DTE específico
   // Permite que otros tipos de DTE se generen en paralelo sin bloquearse
