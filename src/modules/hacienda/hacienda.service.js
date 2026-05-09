@@ -487,10 +487,110 @@ const anularDTE = async ({ documentoFirmado, version = 1 }) => {
   }
 };
 
+
+/**
+ * Transmitir un lote de DTEs a Hacienda
+ * Usado para enviar DTEs en contingencia
+ * Máximo 100 documentos por lote según el manual
+ *
+ * @param {string[]} documentos — array de JWTs firmados
+ * @param {string}   nitEmisor  — NIT sin guiones
+ * @param {string}   ambiente   — 00|01
+ */
+const transmitirLote = async ({ documentos, nitEmisor, ambiente }) => {
+  const { token } = await autenticar();
+
+  // idEnvio debe ser UUID v4 en MAYÚSCULAS según el manual de lotes
+  const { v4: uuidv4 } = require('uuid');
+  const idEnvio = uuidv4().toUpperCase();
+
+  try {
+    logger.info('Transmitiendo lote a Hacienda', {
+      total_documentos: documentos.length,
+      ambiente,
+    });
+
+    const respuesta = await clienteHacienda.post(
+      URL_RECEPCION_HACIENDA.replace('recepciondte', 'recepcionlote/'),
+      {
+        ambiente,
+        idEnvio,
+        version:    1,
+        nitEmisor,
+        documentos,
+      },
+      {
+        headers: { 'Authorization': `Bearer ${token}` },
+      }
+    );
+
+    const data = respuesta.data;
+
+    logger.info('Lote recibido por Hacienda', {
+      codigo_lote: data.codigoLote,
+      estado:      data.estado,
+      descripcion: data.descripcionMsg,
+    });
+
+    return {
+      codigoLote:  data.codigoLote,
+      idEnvio:     data.idEnvio,
+      estado:      data.estado,
+      descripcion: data.descripcionMsg,
+    };
+
+  } catch (err) {
+    const errorInfo = parsearErrorHacienda(err);
+    logger.error('Error al transmitir lote a Hacienda', errorInfo);
+
+    if (esErrorConexion(err)) {
+      throw { status: 503, mensaje: 'No se pudo conectar con Hacienda para enviar el lote.' };
+    }
+
+    throw { status: 502, mensaje: 'Error al enviar el lote a Hacienda.' };
+  }
+};
+
+/**
+ * Consultar el estado de un lote enviado a Hacienda
+ * Los lotes se procesan de forma asíncrona — consultar periódicamente
+ *
+ * @param {string} codigoLote — código devuelto por Hacienda al enviar el lote
+ */
+const consultarLote = async ({ codigoLote }) => {
+  const { token } = await autenticar();
+
+  // URL: /fesv/recepcion/consultadtelote/{codigoLote}
+  const url = `${URL_CONSULTA_HACIENDA.replace('consultadte/', '')}consultadtelote/${codigoLote}`;
+
+  try {
+    const respuesta = await clienteHacienda.get(url, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    return respuesta.data;
+
+  } catch (err) {
+    const errorInfo = parsearErrorHacienda(err);
+    logger.error('Error al consultar lote en Hacienda', {
+      codigo_lote: codigoLote,
+      ...errorInfo,
+    });
+
+    if (esErrorConexion(err)) {
+      throw { status: 503, mensaje: 'No se pudo conectar con Hacienda para consultar el lote.' };
+    }
+
+    throw { status: 502, mensaje: 'Error al consultar el estado del lote en Hacienda.' };
+  }
+};
+
 module.exports = {
   autenticar,
   transmitirDTE,
   consultarDTE,
   notificarContingencia,
   anularDTE,
+  transmitirLote,
+  consultarLote,
 };
