@@ -214,15 +214,11 @@ const actualizarUsuario = async ({ id, datos }) => {
   // Verificar que el usuario existe
   const usuarioActual = await obtenerUsuario({ id });
 
-  // Si intenta desactivar al último administrador — rechazar
-  if (datos.activo === false && usuarioActual.rol === 'administrador') {
-    await verificarUltimoAdmin(id);
-  }
-
-  // Si intenta cambiar rol de administrador a operador — verificar
-  if (datos.rol === 'operador' && usuarioActual.rol === 'administrador') {
-    await verificarUltimoAdmin(id);
-  }
+  // Determinar si necesitamos protección de último administrador
+  const necesitaProteccionAdmin = (
+    (datos.activo === false && usuarioActual.rol === 'administrador') ||
+    (datos.rol === 'operador' && usuarioActual.rol === 'administrador')
+  );
 
   // Si se actualiza el email verificar que no existe en otro usuario
   if (datos.email) {
@@ -282,32 +278,69 @@ const actualizarUsuario = async ({ id, datos }) => {
 
   valores.push(id);
 
-  const { rows } = await query(
-    `UPDATE usuarios
-     SET ${campos.join(', ')}
-     WHERE id = $${idx}
-     RETURNING
-       id, nombre, email, rol,
-       establecimiento_id, activo,
-       intentos_fallidos, bloqueado_hasta,
-       ultimo_login, creado_en, actualizado_en`,
-    valores
-  );
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
 
-  logger.info('Usuario actualizado', {
-    id,
-    campos_actualizados: Object.keys(datos).filter((k) => k !== 'password'),
-    password_cambiado:   !!datos.password,
-    // NUNCA loguear el password
-  });
+    // Fix CUBIC: SELECT FOR UPDATE dentro de transacción
+    // para evitar race condition en la protección del último administrador
+    if (necesitaProteccionAdmin) {
+      const { rows: admins } = await client.query(
+        `SELECT COUNT(*) AS total
+         FROM usuarios
+         WHERE rol = 'administrador'
+           AND activo = TRUE
+           AND id != $1
+         FOR UPDATE`,
+        [id]
+      );
 
-  return formatearUsuario({ ...rows[0], establecimiento_nombre: null, establecimiento_cod: null });
+      if (parseInt(admins[0].total, 10) === 0) {
+        await client.query('ROLLBACK');
+        throw {
+          status:  409,
+          mensaje: 'No se puede realizar esta operación porque quedaría el sistema sin administradores activos.',
+        };
+      }
+    }
+
+    const { rows } = await client.query(
+      `UPDATE usuarios
+       SET ${campos.join(', ')}
+       WHERE id = $${idx}
+       RETURNING
+         id, nombre, email, rol,
+         establecimiento_id, activo,
+         intentos_fallidos, bloqueado_hasta,
+         ultimo_login, creado_en, actualizado_en`,
+      valores
+    );
+
+    await client.query('COMMIT');
+
+    logger.info('Usuario actualizado', {
+      id,
+      campos_actualizados: Object.keys(datos).filter((k) => k !== 'password'),
+      password_cambiado:   !!datos.password,
+      // NUNCA loguear el password
+    });
+
+    return formatearUsuario({ ...rows[0], establecimiento_nombre: null, establecimiento_cod: null });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 };
 
 /**
  * Desactivar un usuario (soft delete)
  * Endpoint DELETE hace UPDATE activo = FALSE
  * Verificar que no es el último administrador
+ * Fix CUBIC: SELECT FOR UPDATE dentro de transacción
+ * para evitar race condition cuando dos admins se desactivan simultáneamente
  */
 const desactivarUsuario = async ({ id }) => {
   const usuario = await obtenerUsuario({ id });
@@ -316,17 +349,47 @@ const desactivarUsuario = async ({ id }) => {
     throw { status: 409, mensaje: 'El usuario ya está inactivo.' };
   }
 
-  // No se puede desactivar al último administrador
-  if (usuario.rol === 'administrador') {
-    await verificarUltimoAdmin(id);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    if (usuario.rol === 'administrador') {
+      // SELECT FOR UPDATE bloquea las filas de administradores activos
+      // evita que dos requests simultáneos pasen la verificación
+      const { rows } = await client.query(
+        `SELECT COUNT(*) AS total
+         FROM usuarios
+         WHERE rol = 'administrador'
+           AND activo = TRUE
+           AND id != $1
+         FOR UPDATE`,
+        [id]
+      );
+
+      if (parseInt(rows[0].total, 10) === 0) {
+        await client.query('ROLLBACK');
+        throw {
+          status:  409,
+          mensaje: 'No se puede realizar esta operación porque quedaría el sistema sin administradores activos.',
+        };
+      }
+    }
+
+    await client.query(
+      'UPDATE usuarios SET activo = FALSE WHERE id = $1',
+      [id]
+    );
+
+    await client.query('COMMIT');
+
+    logger.info('Usuario desactivado', { id, email: usuario.email });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  await query(
-    'UPDATE usuarios SET activo = FALSE WHERE id = $1',
-    [id]
-  );
-
-  logger.info('Usuario desactivado', { id, email: usuario.email });
 };
 
 /**

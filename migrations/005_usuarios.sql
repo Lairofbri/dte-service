@@ -52,9 +52,8 @@ CREATE TRIGGER trigger_usuarios_updated
   BEFORE UPDATE ON usuarios
   FOR EACH ROW EXECUTE FUNCTION actualizar_timestamp();
 
--- Índices
-CREATE INDEX IF NOT EXISTS idx_usuarios_email
-  ON usuarios(email);
+-- DESPUÉS — eliminar el duplicado de email
+-- UNIQUE(email) ya crea el índice automáticamente
 CREATE INDEX IF NOT EXISTS idx_usuarios_establecimiento
   ON usuarios(establecimiento_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_activo
