@@ -13,8 +13,10 @@ const axios  = require('axios');
 const {
   URL_FIRMADOR,
   TIMEOUT_FIRMADOR,
-  NIT_EMISOR,
 } = require('../../config/env');
+// NIT se lee de la BD — la única fuente de verdad del emisor
+// No del env — permite vender a múltiples clientes sin cambiar variables
+const configuracionService = require('../configuracion/configuracion.service');
 const logger = require('../../utils/logger');
 
 // ─────────────────────────────────────────────
@@ -49,8 +51,9 @@ const firmarDTE = async ({ jsonDte, passwordPri }) => {
     };
   }
 
-  // Formatear NIT sin guiones según el manual del firmador
-  const nitSinGuiones = NIT_EMISOR.replace(/-/g, '');
+  // Obtener NIT de la BD — única fuente de verdad del emisor
+  const config = await configuracionService.obtenerConfiguracion();
+  const nitSinGuiones = config.nit.replace(/-/g, '');
 
   logger.info('Enviando DTE al firmador', {
     nit:    nitSinGuiones,
@@ -154,14 +157,8 @@ const firmarDTE = async ({ jsonDte, passwordPri }) => {
  */
 const verificarFirmador = async () => {
   try {
-    // DESPUÉS — construcción robusta independiente del slash final
-    const construirUrlBase = (url) => {
-    // para obtener la URL base del firmador
-    // Eliminar trailing slash y el path del endpoint
-    return url.replace(/\/firmardocumento\/?$/, '');
-    };
-
-    const urlStatus = `${construirUrlBase(URL_FIRMADOR)}/firmardocumento/status`;
+    // El firmador expone un endpoint de status según el manual
+    const urlStatus = URL_FIRMADOR.replace('firmardocumento/', 'firmardocumento/status');
 
     const respuesta = await clienteFirmador.get(urlStatus);
 

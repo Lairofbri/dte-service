@@ -41,28 +41,17 @@ module.exports = {
   // Clave AES-256 para encriptar credenciales sensibles en BD
   ENCRYPTION_KEY:  requerida('ENCRYPTION_KEY'),
 
-  // ── Datos del emisor ──
-  NIT_EMISOR:              requerida('NIT_EMISOR'),
-  NRC_EMISOR:              opcional('NRC_EMISOR'),
-  NOMBRE_EMISOR:           requerida('NOMBRE_EMISOR'),
-  NOMBRE_COMERCIAL:        opcional('NOMBRE_COMERCIAL'),
-  DIRECCION_EMISOR:        requerida('DIRECCION_EMISOR'),
-  TELEFONO_EMISOR:         opcional('TELEFONO_EMISOR'),
-  EMAIL_EMISOR:            opcional('EMAIL_EMISOR'),
-  CODIGO_ACTIVIDAD:        requerida('CODIGO_ACTIVIDAD'),
-  CODIGO_ESTABLECIMIENTO:  opcional('CODIGO_ESTABLECIMIENTO', '0001'),
-  CODIGO_PUNTO_VENTA:      opcional('CODIGO_PUNTO_VENTA', '0001'),
-  TIPO_ESTABLECIMIENTO:    opcional('TIPO_ESTABLECIMIENTO', '02'),
-
-  // ── Hacienda ──
+  // ── Hacienda — solo URLs e infraestructura ──
+  // Los datos del emisor (NIT, nombre, credenciales) viven en la BD
+  // tabla configuracion — nunca en variables de entorno
+  // Esto permite vender el servicio a múltiples clientes
+  // sin cambiar el código — solo cambia la BD
   AMBIENTE_HACIENDA:         opcional('AMBIENTE_HACIENDA', '00'),
   URL_AUTH_HACIENDA:         requerida('URL_AUTH_HACIENDA'),
   URL_RECEPCION_HACIENDA:    requerida('URL_RECEPCION_HACIENDA'),
   URL_CONSULTA_HACIENDA:     requerida('URL_CONSULTA_HACIENDA'),
   URL_CONTINGENCIA_HACIENDA: requerida('URL_CONTINGENCIA_HACIENDA'),
   URL_ANULACION_HACIENDA:    requerida('URL_ANULACION_HACIENDA'),
-  USUARIO_HACIENDA:          requerida('USUARIO_HACIENDA'),
-  PASSWORD_HACIENDA:         requerida('PASSWORD_HACIENDA'),
   TIMEOUT_HACIENDA:          opcionalInt('TIMEOUT_HACIENDA', 8000),
   MAX_REINTENTOS_HACIENDA:   opcionalInt('MAX_REINTENTOS_HACIENDA', 2),
 
