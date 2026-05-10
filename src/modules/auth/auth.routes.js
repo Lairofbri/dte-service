@@ -19,16 +19,17 @@ const router = Router();
 // Máximo 10 intentos por minuto por IP
 // Más estricto que el rate limiting general
 // ─────────────────────────────────────────────
+// express-rate-limit usa su propio generador que normaliza IPv4/IPv6
 const limiteLogin = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
+  windowMs: 60 * 1000,
   max:      10,
   message:  {
     ok:      false,
     mensaje: 'Demasiados intentos de login. Espera 1 minuto antes de intentar de nuevo.',
   },
-  keyGenerator:    (req) => req.ip,
   standardHeaders: true,
   legacyHeaders:   false,
+  // Sin keyGenerator — el default de express-rate-limit maneja IPv4/IPv6 correctamente
 });
 
 // ─────────────────────────────────────────────

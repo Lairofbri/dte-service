@@ -69,7 +69,18 @@ module.exports = {
   // ── JWT ──
   // Secreto para firmar tokens JWT — mínimo 256 bits
   // Generar con: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-  JWT_SECRET:            requerida('JWT_SECRET'),
+  // 256 bits = 32 bytes = 64 caracteres hex
+// Usamos 64 caracteres como mínimo para garantizar al menos 256 bits
+JWT_SECRET: (() => {
+  const secret = requerida('JWT_SECRET');
+  if (secret.length < 64) {
+    throw new Error(
+      '[DTE-SERVICE] JWT_SECRET debe tener al menos 64 caracteres (256 bits mínimo).\n' +
+      'Genera uno con: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"'
+    );
+  }
+  return secret;
+})(),
   JWT_EXPIRA_EN:         opcional('JWT_EXPIRA_EN', '8h'),
   JWT_REFRESH_EXPIRA_EN: opcional('JWT_REFRESH_EXPIRA_EN', '7d'),
 
