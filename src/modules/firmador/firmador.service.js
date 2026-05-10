@@ -157,8 +157,10 @@ const firmarDTE = async ({ jsonDte, passwordPri }) => {
  */
 const verificarFirmador = async () => {
   try {
-    // El firmador expone un endpoint de status según el manual
-    const urlStatus = URL_FIRMADOR.replace('firmardocumento/', 'firmardocumento/status');
+    // Construir URL de status de forma robusta
+    // independiente de si URL_FIRMADOR tiene trailing slash o no
+    const construirUrlBase = (url) => url.replace(/\/firmardocumento\/?$/, '');
+    const urlStatus = `${construirUrlBase(URL_FIRMADOR)}/firmardocumento/status`;
 
     const respuesta = await clienteFirmador.get(urlStatus);
 

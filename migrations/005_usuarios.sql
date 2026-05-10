@@ -52,8 +52,9 @@ CREATE TRIGGER trigger_usuarios_updated
   BEFORE UPDATE ON usuarios
   FOR EACH ROW EXECUTE FUNCTION actualizar_timestamp();
 
--- DESPUÉS — eliminar el duplicado de email
--- UNIQUE(email) ya crea el índice automáticamente
+-- Índices
+CREATE INDEX IF NOT EXISTS idx_usuarios_email
+  ON usuarios(email);
 CREATE INDEX IF NOT EXISTS idx_usuarios_establecimiento
   ON usuarios(establecimiento_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_activo
@@ -75,10 +76,11 @@ CREATE INDEX IF NOT EXISTS idx_auditoria_usuario
 
 -- ─────────────────────────────────────────────
 -- USUARIO ADMINISTRADOR POR DEFECTO
--- Se crea con password temporal que DEBE cambiarse
--- Password: set via secure deployment process (see deployment docs)
--- IMPORTANTE: El cliente DEBE cambiar este password
---             en el primer login
+-- Password inicial hardcodeado: Admin@DTE2024!
+-- Hash bcrypt de 12 rondas incluido directamente en esta migración
+-- ACCIÓN REQUERIDA: cambiar este password inmediatamente
+-- después de ejecutar la migración — antes de poner en producción
+-- Cambiarlo con: PATCH /api/usuarios/:id { "password": "NuevoPassword" }
 -- ─────────────────────────────────────────────
 INSERT INTO usuarios (
   nombre, email, password_hash, rol, establecimiento_id
@@ -87,7 +89,7 @@ SELECT
   'Administrador',
   'admin@dte.local',
   -- Hash bcrypt de 'Admin@DTE2024!' con 12 rondas
-  -- El cliente DEBE cambiar este password en el primer login
+  -- ESTE PASSWORD DEBE CAMBIARSE ANTES DE PRODUCCIÓN
   '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lewis.Qcm7KmN.r5u',
   'administrador',
   e.id
