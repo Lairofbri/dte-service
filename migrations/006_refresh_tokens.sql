@@ -28,6 +28,11 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_usuario
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expira
   ON refresh_tokens(expira_en);
 
+-- Índice para búsqueda O(1) por hash SHA-256
+-- Requerido por el fix de SHA-256 en refresh y logout
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_hash
+  ON refresh_tokens(token_hash);
+
 -- ─────────────────────────────────────────────
 -- FIN DE MIGRACIÓN
 -- ─────────────────────────────────────────────
