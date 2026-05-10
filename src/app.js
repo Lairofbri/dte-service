@@ -18,6 +18,7 @@ const auditoriaRoutes     = require('./modules/auditoria/auditoria.routes');
 const haciendaRoutes          = require('./modules/hacienda/hacienda.routes');
 const firmadorRoutes          = require('./modules/firmador/firmador.routes');
 const establecimientosRoutes  = require('./modules/establecimientos/establecimientos.routes');
+const usuariosRoutes          = require('./modules/usuarios/usuarios.routes');
 
 const app = express();
 
@@ -111,6 +112,7 @@ app.use('/api/auditoria',     auditoriaRoutes);
 app.use('/api/hacienda',         haciendaRoutes);
 app.use('/api/firmador',         firmadorRoutes);
 app.use('/api/establecimientos', establecimientosRoutes);
+app.use('/api/usuarios',         usuariosRoutes);
 
 // ─────────────────────────────────────────────
 // 404 — Ruta no encontrada
