@@ -20,7 +20,6 @@ const {
   TIMEOUT_HACIENDA,
   MAX_REINTENTOS_HACIENDA,
   AMBIENTE_HACIENDA,
-  NIT_EMISOR,
 } = require('../../config/env');
 const configuracionService = require('../configuracion/configuracion.service');
 const logger = require('../../utils/logger');
@@ -353,7 +352,7 @@ const consultarDTE = async ({ codigoGeneracion, tipoDte }) => {
     const respuesta = await clienteHacienda.post(
       URL_CONSULTA_HACIENDA,
       {
-        nitEmisor:        NIT_EMISOR.replace(/-/g, ''),
+        nitEmisor:        (await configuracionService.obtenerConfiguracion()).nit.replace(/-/g, ''),
         tdte:             tipoDte,
         codigoGeneracion: codigoGeneracion.toUpperCase(),
       },
@@ -396,7 +395,7 @@ const notificarContingencia = async ({ documentoFirmado }) => {
     const respuesta = await clienteHacienda.post(
       URL_CONTINGENCIA_HACIENDA,
       {
-        nit:      NIT_EMISOR.replace(/-/g, ''),
+        nit:      (await configuracionService.obtenerConfiguracion()).nit.replace(/-/g, ''),
         documento: documentoFirmado,
       },
       {

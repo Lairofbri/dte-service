@@ -76,7 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_auditoria_usuario
 -- ─────────────────────────────────────────────
 -- USUARIO ADMINISTRADOR POR DEFECTO
 -- Se crea con password temporal que DEBE cambiarse
--- Password: Admin@DTE2024! (bcrypt hash)
+-- Password: set via secure deployment process (see deployment docs)
 -- IMPORTANTE: El cliente DEBE cambiar este password
 --             en el primer login
 -- ─────────────────────────────────────────────
