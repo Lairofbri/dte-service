@@ -1,7 +1,7 @@
 {
   "name": "dte-service",
   "version": "1.0.0",
-  "description": "Servicio de Facturación Electrónica DTE — El Salvador",
+  "description": "Servicio de Facturaci\u00f3n Electr\u00f3nica DTE \u2014 El Salvador",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -20,7 +20,8 @@
     "joi": "^17.13.1",
     "pg": "^8.12.0",
     "uuid": "^10.0.0",
-    "winston": "^3.13.0"
+    "winston": "^3.13.0",
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

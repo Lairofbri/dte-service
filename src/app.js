@@ -19,6 +19,7 @@ const haciendaRoutes          = require('./modules/hacienda/hacienda.routes');
 const firmadorRoutes          = require('./modules/firmador/firmador.routes');
 const establecimientosRoutes  = require('./modules/establecimientos/establecimientos.routes');
 const usuariosRoutes          = require('./modules/usuarios/usuarios.routes');
+const authRoutes              = require('./modules/auth/auth.routes');
 
 const app = express();
 
@@ -42,7 +43,7 @@ app.use(cors({
     callback(new Error(`Origen no permitido: ${origin}`));
   },
   methods:     ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'X-API-Key'],
+  allowedHeaders: ['Content-Type', 'X-API-Key', 'Authorization'],
   credentials: false,
 }));
 
@@ -105,6 +106,9 @@ app.get('/health', (_req, res) => {
 // RUTAS DE LA API
 // Todas requieren API Key (middleware aplicado en cada router)
 // ─────────────────────────────────────────────
+// Auth — sin API Key, maneja su propia autenticación
+app.use('/api/auth',          authRoutes);
+
 app.use('/api/configuracion', configuracionRoutes);
 app.use('/api/dte',           limiteDTE, dteRoutes);
 app.use('/api/contingencia',  contingenciaRoutes);
