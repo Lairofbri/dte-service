@@ -77,6 +77,13 @@ module.exports = {
   S3_SECRET_KEY: opcional('S3_SECRET_KEY'),
   S3_REGION:     opcional('S3_REGION', 'auto'),
 
+  // ── JWT ──
+  // Secreto para firmar tokens JWT — mínimo 256 bits
+  // Generar con: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+  JWT_SECRET:            requerida('JWT_SECRET'),
+  JWT_EXPIRA_EN:         opcional('JWT_EXPIRA_EN', '8h'),
+  JWT_REFRESH_EXPIRA_EN: opcional('JWT_REFRESH_EXPIRA_EN', '7d'),
+
   // CORS
   CORS_ORIGINS: (opcional('CORS_ORIGINS', 'http://localhost:3000'))
     .split(',')
