@@ -7,13 +7,15 @@
 // → JWT NUNCA en logs
 // → Refresh token NUNCA en logs — solo su hash en BD
 // → Verificar activo Y no bloqueado ANTES de comparar password
-//   → evita timing attacks que revelan si el usuario existe
 // → establecimiento_id SIEMPRE del JWT — nunca del body
-// → Rate limiting en login aplicado en el router
+//
+// Fix CUBIC: Refresh tokens con SHA-256 en vez de bcrypt
+// → SHA-256 es determinístico → búsqueda directa O(1) en BD
+// → El token tiene 64 bytes aleatorios — entropía suficiente sin bcrypt
 
-const bcrypt   = require('bcryptjs');
-const jwt      = require('jsonwebtoken');
-const crypto   = require('crypto');
+const bcrypt  = require('bcryptjs');
+const jwt     = require('jsonwebtoken');
+const crypto  = require('crypto');
 const { query } = require('../../config/database');
 const usuariosService = require('../usuarios/usuarios.service');
 const {
@@ -23,15 +25,20 @@ const {
 } = require('../../config/env');
 const logger = require('../../utils/logger');
 
-const BCRYPT_ROUNDS = 12;
-
 // ─────────────────────────────────────────────
 // HELPERS INTERNOS
 // ─────────────────────────────────────────────
 
 /**
+ * Hashear refresh token con SHA-256
+ * Determinístico → permite búsqueda directa WHERE token_hash = $1
+ * El token tiene 512 bits de entropía — no necesita bcrypt
+ */
+const hashearRefreshToken = (token) =>
+  crypto.createHash('sha256').update(token).digest('hex');
+
+/**
  * Generar access token JWT
- * Incluye: sub, email, rol, establecimiento_id
  * establecimiento_id SIEMPRE del JWT — nunca del body
  */
 const generarAccessToken = (usuario) => {
@@ -48,19 +55,13 @@ const generarAccessToken = (usuario) => {
 };
 
 /**
- * Generar refresh token aleatorio y guardarlo hasheado en BD
- * El token raw se devuelve al cliente — el hash se guarda en BD
- * NUNCA guardar el token raw
+ * Generar refresh token y guardarlo hasheado con SHA-256 en BD
+ * El token raw va al cliente — el hash SHA-256 va a la BD
  */
 const generarRefreshToken = async (usuarioId) => {
-  // Token aleatorio de 64 bytes en hex — suficientemente único
-  const tokenRaw = crypto.randomBytes(64).toString('hex');
+  const tokenRaw  = crypto.randomBytes(64).toString('hex');
+  const tokenHash = hashearRefreshToken(tokenRaw);
 
-  // Hashear con bcrypt antes de guardar en BD
-  const tokenHash = await bcrypt.hash(tokenRaw, BCRYPT_ROUNDS);
-
-  // Calcular fecha de expiración según JWT_REFRESH_EXPIRA_EN
-  // Parsear '7d' → 7 días en ms
   const diasExpiracion = parseInt(JWT_REFRESH_EXPIRA_EN, 10) || 7;
   const expiraEn = new Date();
   expiraEn.setDate(expiraEn.getDate() + diasExpiracion);
@@ -80,34 +81,21 @@ const generarRefreshToken = async (usuarioId) => {
 
 /**
  * Login con email + password
- * Flujo de seguridad:
- * 1. Buscar usuario por email
- * 2. Verificar activo Y no bloqueado ANTES de comparar password
- * 3. Comparar password con bcrypt (timing-safe)
- * 4. Si falla → incrementar intentos, posible bloqueo
- * 5. Si éxito → generar tokens, resetear intentos
  */
 const login = async ({ email, password }) => {
-  // Buscar usuario por email — incluye password_hash
   const usuario = await usuariosService.obtenerUsuarioPorEmail({
     email: email.toLowerCase(),
   });
 
-  // Respuesta genérica si no existe — no revelar si el email existe
   if (!usuario) {
-    logger.warn('Intento de login con email no registrado', {
-      // NUNCA loguear el email completo en producción
-      // solo los primeros caracteres para debugging
-    });
+    logger.warn('Intento de login con email no registrado');
     throw { status: 401, mensaje: 'Credenciales inválidas.' };
   }
 
-  // Verificar que el usuario está activo
   if (!usuario.activo) {
     throw { status: 401, mensaje: 'Credenciales inválidas.' };
   }
 
-  // Verificar que no está bloqueado por intentos fallidos
   if (usuario.bloqueado_hasta && new Date(usuario.bloqueado_hasta) > new Date()) {
     const minutosRestantes = Math.ceil(
       (new Date(usuario.bloqueado_hasta) - new Date()) / 60000
@@ -118,19 +106,15 @@ const login = async ({ email, password }) => {
     };
   }
 
-  // Comparar password con bcrypt — timing-safe
-  // NUNCA loguear el password
   const passwordValido = await bcrypt.compare(password, usuario.password_hash);
 
   if (!passwordValido) {
-    // Incrementar intentos fallidos — puede bloquear la cuenta
     const resultado = await usuariosService.registrarIntentoFallido({ id: usuario.id });
 
     logger.warn('Intento de login fallido', {
-      usuario_id:       usuario.id,
-      intentos:         resultado.intentos_fallidos,
-      bloqueado_hasta:  resultado.bloqueado_hasta,
-      // NUNCA loguear el password
+      usuario_id:      usuario.id,
+      intentos:        resultado.intentos_fallidos,
+      bloqueado_hasta: resultado.bloqueado_hasta,
     });
 
     if (resultado.bloqueado_hasta) {
@@ -143,23 +127,20 @@ const login = async ({ email, password }) => {
     throw { status: 401, mensaje: 'Credenciales inválidas.' };
   }
 
-  // Login exitoso — generar tokens
-  const accessToken              = generarAccessToken(usuario);
-  const { tokenRaw, expiraEn }   = await generarRefreshToken(usuario.id);
+  const accessToken            = generarAccessToken(usuario);
+  const { tokenRaw, expiraEn } = await generarRefreshToken(usuario.id);
 
-  // Resetear intentos fallidos y registrar último login
   await usuariosService.registrarLoginExitoso({ id: usuario.id });
 
   logger.info('Login exitoso', {
-    usuario_id:        usuario.id,
-    rol:               usuario.rol,
+    usuario_id:         usuario.id,
+    rol:                usuario.rol,
     establecimiento_id: usuario.establecimiento_id,
-    // NUNCA loguear tokens ni passwords
   });
 
   return {
     access_token:  accessToken,
-    refresh_token: tokenRaw,       // raw al cliente — hash en BD
+    refresh_token: tokenRaw,
     token_type:    'Bearer',
     expira_en:     JWT_EXPIRA_EN,
     usuario: {
@@ -178,59 +159,51 @@ const login = async ({ email, password }) => {
 
 /**
  * Renovar access token usando refresh token
- * Busca el refresh token en BD comparando con bcrypt
- * Genera nuevo access token si el refresh es válido
+ * Fix CUBIC: búsqueda O(1) por hash SHA-256
  */
 const refresh = async ({ refreshToken }) => {
-  // Obtener todos los refresh tokens no expirados
-  // Necesitamos comparar con bcrypt — no podemos buscar por hash directo
-  // porque bcrypt usa salt aleatorio
-  const { rows: tokens } = await query(
-    `SELECT rt.id, rt.usuario_id, rt.token_hash, rt.expira_en,
-            u.id AS u_id, u.nombre, u.email, u.rol,
-            u.establecimiento_id, u.activo,
-            e.nombre AS establecimiento_nombre,
-            e.cod_estable_mh AS establecimiento_cod
+  const tokenHash = hashearRefreshToken(refreshToken);
+
+  const { rows } = await query(
+    `SELECT
+       rt.id,
+       rt.expira_en,
+       u.id               AS u_id,
+       u.nombre,
+       u.email,
+       u.rol,
+       u.establecimiento_id,
+       u.activo,
+       u.bloqueado_hasta,
+       e.nombre           AS establecimiento_nombre,
+       e.cod_estable_mh   AS establecimiento_cod
      FROM refresh_tokens rt
-     INNER JOIN usuarios u ON u.id = rt.usuario_id
+     INNER JOIN usuarios        u ON u.id  = rt.usuario_id
      INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     WHERE rt.expira_en > NOW()
-       AND u.activo = TRUE
-     ORDER BY rt.creado_en DESC`
+     WHERE rt.token_hash = $1
+       AND rt.expira_en  > NOW()
+       AND u.activo      = TRUE`,
+    [tokenHash]
   );
 
-  // Buscar el token que coincida con bcrypt
-  let tokenEncontrado = null;
-  for (const token of tokens) {
-    const coincide = await bcrypt.compare(refreshToken, token.token_hash);
-    if (coincide) {
-      tokenEncontrado = token;
-      break;
-    }
-  }
-
-  if (!tokenEncontrado) {
+  if (rows.length === 0) {
     throw { status: 401, mensaje: 'Refresh token inválido o expirado.' };
   }
 
-  // Verificar que el usuario sigue activo y no bloqueado
-  if (tokenEncontrado.bloqueado_hasta &&
-      new Date(tokenEncontrado.bloqueado_hasta) > new Date()) {
+  const t = rows[0];
+
+  if (t.bloqueado_hasta && new Date(t.bloqueado_hasta) > new Date()) {
     throw { status: 401, mensaje: 'Usuario bloqueado. Inicia sesión nuevamente.' };
   }
 
-  // Generar nuevo access token
   const accessToken = generarAccessToken({
-    id:                 tokenEncontrado.u_id,
-    email:              tokenEncontrado.email,
-    rol:                tokenEncontrado.rol,
-    establecimiento_id: tokenEncontrado.establecimiento_id,
+    id:                 t.u_id,
+    email:              t.email,
+    rol:                t.rol,
+    establecimiento_id: t.establecimiento_id,
   });
 
-  logger.info('Access token renovado', {
-    usuario_id: tokenEncontrado.usuario_id,
-    // NUNCA loguear tokens
-  });
+  logger.info('Access token renovado', { usuario_id: t.u_id });
 
   return {
     access_token: accessToken,
@@ -241,42 +214,26 @@ const refresh = async ({ refreshToken }) => {
 
 /**
  * Logout — revocar refresh token
- * Operación idempotente — no falla si el token no existe
- * DELETE real está bien aquí — no son datos históricos
+ * Fix CUBIC: DELETE directo por hash SHA-256 → O(1)
+ * Idempotente — no falla si el token no existe
  */
 const logout = async ({ refreshToken }) => {
-  // Obtener tokens del usuario para comparar con bcrypt
-  const { rows: tokens } = await query(
-    `SELECT rt.id, rt.token_hash
-     FROM refresh_tokens rt
-     WHERE rt.expira_en > NOW()`
+  const tokenHash = hashearRefreshToken(refreshToken);
+
+  await query(
+    'DELETE FROM refresh_tokens WHERE token_hash = $1',
+    [tokenHash]
   );
 
-  // Buscar y eliminar el token que coincida
-  for (const token of tokens) {
-    const coincide = await bcrypt.compare(refreshToken, token.token_hash);
-    if (coincide) {
-      await query(
-        'DELETE FROM refresh_tokens WHERE id = $1',
-        [token.id]
-      );
-      logger.info('Logout exitoso — refresh token revocado');
-      return;
-    }
-  }
-
-  // Si no se encontró el token — operación idempotente, no fallar
-  logger.info('Logout — refresh token no encontrado o ya expirado');
+  logger.info('Logout exitoso — refresh token revocado');
 };
 
 /**
- * Obtener datos del usuario actual desde el JWT
- * El JWT ya fue verificado por el middleware
- * Solo necesitamos buscar datos actualizados en BD
+ * Obtener datos del usuario actual
+ * JWT ya verificado por middleware autenticarJWT
  */
 const me = async ({ usuarioId }) => {
-  const usuario = await usuariosService.obtenerUsuario({ id: usuarioId });
-  return usuario;
+  return await usuariosService.obtenerUsuario({ id: usuarioId });
 };
 
 module.exports = {
