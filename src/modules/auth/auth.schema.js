@@ -26,28 +26,11 @@ const loginSchema = Joi.object({
   }),
 });
 
-/**
- * Schema para refresh token
- * Solo el refresh token
- */
-const refreshSchema = Joi.object({
-  refresh_token: Joi.string().min(1).required().messages({
-    'any.required': 'El refresh_token es requerido.',
-  }),
-});
-
-/**
- * Schema para logout
- * Solo el refresh token — para revocarlo en BD
- */
-const logoutSchema = Joi.object({
-  refresh_token: Joi.string().min(1).required().messages({
-    'any.required': 'El refresh_token es requerido.',
-  }),
-});
+// refreshSchema y logoutSchema eliminados —
+// el refresh token ya no viene en el body
+// viene en una httpOnly cookie — más seguro contra XSS
+// el navegador la envía automáticamente en cada request
 
 module.exports = {
   loginSchema,
-  refreshSchema,
-  logoutSchema,
 };

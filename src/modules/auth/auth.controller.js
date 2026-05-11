@@ -5,21 +5,30 @@
 // SEGURIDAD:
 // → Password NUNCA en logs ni respuestas
 // → JWT NUNCA en logs
-// → Refresh token NUNCA en logs
+// → Refresh token en httpOnly cookie — JavaScript no puede leerlo
+//   → inmune a XSS — el navegador lo envía automáticamente
 // → Errores genéricos en login para no revelar info
 
 const service = require('./auth.service');
-const {
-  loginSchema,
-  refreshSchema,
-  logoutSchema,
-} = require('./auth.schema');
+const { loginSchema } = require('./auth.schema');
 const {
   exito,
   error,
   errorServidor,
 } = require('../../utils/response');
 const logger = require('../../utils/logger');
+
+// ─────────────────────────────────────────────
+// CONSTANTES DE LA COOKIE
+// ─────────────────────────────────────────────
+const COOKIE_NOMBRE  = 'dte_refresh_token';
+const COOKIE_OPCIONES = {
+  httpOnly: true,    // JavaScript no puede leerla — inmune a XSS
+  secure:   process.env.NODE_ENV === 'production', // HTTPS solo en producción
+  sameSite: 'strict', // Solo se envía en requests del mismo origen
+  maxAge:   7 * 24 * 60 * 60 * 1000, // 7 días en milisegundos
+  path:     '/api/auth', // Solo se envía a rutas de auth
+};
 
 // ─────────────────────────────────────────────
 // Helper: manejo de errores
@@ -41,8 +50,8 @@ const manejarError = (res, err) => {
 /**
  * POST /api/auth/login
  * Login con email + password
- * Devuelve access token + refresh token
- * Rate limiting aplicado en el router — máximo 10 intentos/minuto por IP
+ * → access_token en el body (memoria del frontend)
+ * → refresh_token en httpOnly cookie (invisible para JavaScript)
  */
 const login = async (req, res) => {
   const { error: validacionError, value } = loginSchema.validate(req.body);
@@ -53,7 +62,20 @@ const login = async (req, res) => {
       email:    value.email,
       password: value.password,
     });
-    return exito(res, resultado, 'Login exitoso.');
+
+    // Guardar refresh token en httpOnly cookie
+    // JavaScript del frontend NO puede leerla — inmune a XSS
+    res.cookie(COOKIE_NOMBRE, resultado.refresh_token, COOKIE_OPCIONES);
+
+    // Devolver access token en body — el frontend lo guarda en memoria (Zustand)
+    // NUNCA devolver el refresh_token en el body
+    return exito(res, {
+      access_token: resultado.access_token,
+      token_type:   resultado.token_type,
+      expira_en:    resultado.expira_en,
+      usuario:      resultado.usuario,
+    }, 'Login exitoso.');
+
   } catch (err) {
     return manejarError(res, err);
   }
@@ -61,34 +83,52 @@ const login = async (req, res) => {
 
 /**
  * POST /api/auth/refresh
- * Renovar access token usando refresh token
+ * Renovar access token usando refresh token de la cookie httpOnly
+ * El navegador envía la cookie automáticamente — no necesita body
  */
 const refresh = async (req, res) => {
-  const { error: validacionError, value } = refreshSchema.validate(req.body);
-  if (validacionError) return error(res, validacionError.details[0].message, 400);
+  // Leer refresh token de la cookie httpOnly — no del body
+  const refreshToken = req.cookies?.[COOKIE_NOMBRE];
+
+  if (!refreshToken) {
+    return error(res, 'Sesión expirada. Inicia sesión nuevamente.', 401);
+  }
 
   try {
-    const resultado = await service.refresh({
-      refreshToken: value.refresh_token,
-    });
+    const resultado = await service.refresh({ refreshToken });
+
+    // Renovar la cookie también
+    res.cookie(COOKIE_NOMBRE, refreshToken, COOKIE_OPCIONES);
+
     return exito(res, resultado, 'Token renovado exitosamente.');
   } catch (err) {
+    // Si el refresh falla limpiar la cookie
+    res.clearCookie(COOKIE_NOMBRE, { path: '/api/auth' });
     return manejarError(res, err);
   }
 };
 
 /**
  * POST /api/auth/logout
- * Revocar refresh token — operación idempotente
+ * Revocar refresh token de la cookie httpOnly
+ * Limpiar la cookie del navegador
  */
 const logout = async (req, res) => {
-  const { error: validacionError, value } = logoutSchema.validate(req.body);
-  if (validacionError) return error(res, validacionError.details[0].message, 400);
+  const refreshToken = req.cookies?.[COOKIE_NOMBRE];
 
   try {
-    await service.logout({ refreshToken: value.refresh_token });
+    // Si hay cookie — revocarla en BD
+    if (refreshToken) {
+      await service.logout({ refreshToken });
+    }
+
+    // Limpiar la cookie del navegador siempre — operación idempotente
+    res.clearCookie(COOKIE_NOMBRE, { path: '/api/auth' });
+
     return exito(res, null, 'Sesión cerrada exitosamente.');
   } catch (err) {
+    // Limpiar cookie aunque falle el servicio
+    res.clearCookie(COOKIE_NOMBRE, { path: '/api/auth' });
     return manejarError(res, err);
   }
 };
@@ -100,7 +140,6 @@ const logout = async (req, res) => {
  */
 const me = async (req, res) => {
   try {
-    // req.usuario fue agregado por el middleware autenticarJWT
     const usuario = await service.me({ usuarioId: req.usuario.id });
     return exito(res, usuario);
   } catch (err) {

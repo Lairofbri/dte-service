@@ -2,10 +2,11 @@
 // Configuración central de Express para el dte-service
 // Seguridad máxima: este servicio maneja documentos tributarios legales
 
-const express    = require('express');
-const helmet     = require('helmet');
-const cors       = require('cors');
-const rateLimit  = require('express-rate-limit');
+const express      = require('express');
+const helmet       = require('helmet');
+const cors         = require('cors');
+const cookieParser = require('cookie-parser');
+const rateLimit    = require('express-rate-limit');
 const { CORS_ORIGINS, ES_PRODUCCION } = require('./config/env');
 const logger     = require('./utils/logger');
 const { noEncontrado, errorServidor } = require('./utils/response');
@@ -42,10 +43,14 @@ app.use(cors({
     logger.warn('CORS bloqueado', { origin });
     callback(new Error(`Origen no permitido: ${origin}`));
   },
-  methods:     ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'X-API-Key', 'Authorization'],
-  credentials: false,
+  methods:          ['GET', 'POST', 'PATCH', 'DELETE'],
+  allowedHeaders:   ['Content-Type', 'X-API-Key', 'Authorization'],
+  // credentials: true — requerido para que el navegador envíe cookies httpOnly
+  credentials:      true,
 }));
+
+// Cookie parser — para leer el refresh token de la cookie httpOnly
+app.use(cookieParser());
 
 // ─────────────────────────────────────────────
 // RATE LIMITING
