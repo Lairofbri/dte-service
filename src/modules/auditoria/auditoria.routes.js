@@ -1,34 +1,38 @@
-// src/modules/auditoria/auditoria.routes.js
-// Define las rutas del módulo de auditoría
+// src/modules/usuarios/usuarios.routes.js
+// Define las rutas del módulo de usuarios
 // Principio S (SOLID): solo enruta, no valida ni opera
 //
-// SEGURIDAD:
-// → Solo GET — auditoría es de solo lectura
-// → Todas las rutas requieren API Key válida
-// → Rutas específicas ANTES de /:id para evitar conflicto con Express
+// SEGURIDAD: todas las rutas requieren API Key válida
 
 const { Router }           = require('express');
-const controller           = require('./auditoria.controller');
+const controller           = require('./usuarios.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
+const { autenticarDual, soloAdministrador } = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
-// Todas las rutas requieren API Key
-router.use(autenticarApiKey);
+// Usuarios: autenticación dual + solo administrador
+// Solo el admin puede gestionar usuarios
+router.use(autenticarDual);
+router.use(soloAdministrador);
 
 // ─────────────────────────────────────────────
-// IMPORTANTE: rutas específicas ANTES de /:id
-// 'resumen' debe estar antes de /:id
-// para que Express no lo confunda con un UUID
+// RUTAS — específicas ANTES de /:id
 // ─────────────────────────────────────────────
 
-// GET /api/auditoria/resumen — resumen estadístico
-router.get('/resumen', controller.obtenerResumen);
+// GET  /api/usuarios     → listar todos
+router.get('/',    controller.listarUsuarios);
 
-// GET /api/auditoria — listar con filtros y paginación
-router.get('/', controller.listarAuditoria);
+// POST /api/usuarios     → crear usuario
+router.post('/',   controller.crearUsuario);
 
-// GET /api/auditoria/:id — detalle de un registro
-router.get('/:id', controller.obtenerRegistro);
+// GET  /api/usuarios/:id → detalle
+router.get('/:id', controller.obtenerUsuario);
+
+// PATCH /api/usuarios/:id → actualizar
+router.patch('/:id', controller.actualizarUsuario);
+
+// DELETE /api/usuarios/:id → desactivar (soft delete)
+router.delete('/:id', controller.desactivarUsuario);
 
 module.exports = router;

@@ -176,7 +176,13 @@ const listarDTEs = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const resultado = await service.listarDTEs({ filtros });
+    // req.establecimientoId viene del middleware de scoping en dtes.routes.js
+    // Si es JWT → filtra por establecimiento del usuario
+    // Si es API Key → sin filtro (el POS es de confianza)
+    const resultado = await service.listarDTEs({
+      filtros,
+      establecimientoId: req.establecimientoId,
+    });
     return exito(res, resultado);
   } catch (err) {
     return manejarError(res, err);
@@ -196,7 +202,10 @@ const obtenerDTE = async (req, res) => {
   }
 
   try {
-    const dte = await service.obtenerDTE({ codigoGeneracion });
+    const dte = await service.obtenerDTE({
+      codigoGeneracion,
+      establecimientoId: req.establecimientoId,
+    });
     return exito(res, dte);
   } catch (err) {
     return manejarError(res, err);

@@ -2,16 +2,31 @@
 // Define las rutas del módulo de DTEs
 // Principio S (SOLID): solo enruta, no valida ni opera
 //
-// SEGURIDAD: todas las rutas requieren API Key válida
+// SEGURIDAD:
+// → API Key (POS): acceso completo — el POS es de confianza
+// → JWT (frontend): acceso filtrado por establecimiento_id del token
+//   Un operador solo ve y emite DTEs de su establecimiento
 
 const { Router }           = require('express');
 const controller           = require('./dtes.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
+const { autenticarDual }   = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
-// Todas las rutas requieren API Key
-router.use(autenticarApiKey);
+// Autenticación dual — API Key o JWT
+router.use(autenticarDual);
+
+// Middleware de scoping por establecimiento para JWT
+// Si el request viene con JWT, inyecta el establecimiento_id del token
+// en req.establecimientoId para que el controller lo use
+// Si viene con API Key, req.establecimientoId queda undefined (sin filtro)
+router.use((req, res, next) => {
+  if (req.usuario?.establecimiento_id) {
+    req.establecimientoId = req.usuario.establecimiento_id;
+  }
+  next();
+});
 
 // ─────────────────────────────────────────────
 // RUTAS ESPECÍFICAS ANTES DE /:codigoGeneracion
