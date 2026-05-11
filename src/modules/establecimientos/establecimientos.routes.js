@@ -7,12 +7,14 @@
 const { Router }           = require('express');
 const controller           = require('./establecimientos.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
-const { autenticarDual }   = require('../../middlewares/jwt.middleware');
+const { autenticarDual, soloAdministrador } = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
-// Todas las rutas aceptan API Key (POS) o JWT (frontend)
+// Establecimientos: autenticación dual + solo administrador
+// Solo el admin puede gestionar sucursales
 router.use(autenticarDual);
+router.use(soloAdministrador);
 
 // ─────────────────────────────────────────────
 // RUTAS

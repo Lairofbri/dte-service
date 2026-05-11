@@ -166,7 +166,6 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
       receptorNit:     jsonDte.receptor?.nit    || null,
       receptorNrc:     jsonDte.receptor?.nrc    || null,
     });
-   
 
     await registrarAuditoria('DTE_GENERADO', dteGuardado.id, {
       tipo_dte:         tipoDte,
@@ -448,13 +447,21 @@ const anularDTE = async ({ datos, ip }) => {
 
 /**
  * Listar DTEs con filtros y paginación
+ * establecimientoId: si viene del JWT filtra por establecimiento del usuario
+ *                   si viene de API Key (undefined) no filtra — ve todos
  */
-const listarDTEs = async ({ filtros = {} }) => {
+const listarDTEs = async ({ filtros = {}, establecimientoId }) => {
   const { tipo_dte, estado, fecha_desde, fecha_hasta, pagina = 1, limite = 20 } = filtros;
 
   const condiciones = ['1=1'];
   const valores     = [];
   let idx = 1;
+
+  // Scoping por establecimiento — JWT solo ve su establecimiento
+  if (establecimientoId) {
+    condiciones.push(`d.establecimiento_id = $${idx++}`);
+    valores.push(establecimientoId);
+  }
 
   if (tipo_dte)    { condiciones.push(`d.tipo_dte = $${idx++}`);         valores.push(tipo_dte); }
   if (estado)      { condiciones.push(`d.estado = $${idx++}`);           valores.push(estado); }
@@ -497,8 +504,19 @@ const listarDTEs = async ({ filtros = {} }) => {
 /**
  * Obtener detalle de un DTE por código de generación
  * Incluye el JSON completo para reimpresión
+ * establecimientoId: si viene del JWT verifica que el DTE pertenece
+ *                   al establecimiento del usuario (evita cross-tenant)
  */
-const obtenerDTE = async ({ codigoGeneracion }) => {
+const obtenerDTE = async ({ codigoGeneracion, establecimientoId }) => {
+  // Construir filtro de establecimiento si viene del JWT
+  const filtroEstablecimiento = establecimientoId
+    ? 'AND d.establecimiento_id = $2'
+    : '';
+
+  const params = establecimientoId
+    ? [codigoGeneracion.toUpperCase(), establecimientoId]
+    : [codigoGeneracion.toUpperCase()];
+
   const { rows } = await query(
     `SELECT
        d.id, d.tipo_dte, d.codigo_generacion, d.numero_control,
@@ -509,8 +527,9 @@ const obtenerDTE = async ({ codigoGeneracion }) => {
        d.orden_referencia, d.fecha_emision, d.hora_emision,
        d.creado_en, d.actualizado_en
      FROM dtes d
-     WHERE d.codigo_generacion = $1`,
-    [codigoGeneracion.toUpperCase()]
+     WHERE d.codigo_generacion = $1
+     ${filtroEstablecimiento}`,
+    params
   );
 
   if (rows.length === 0) {

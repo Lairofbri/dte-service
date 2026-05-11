@@ -7,12 +7,14 @@
 const { Router }           = require('express');
 const controller           = require('./usuarios.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
-const { autenticarDual }   = require('../../middlewares/jwt.middleware');
+const { autenticarDual, soloAdministrador } = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
-// Todas las rutas aceptan API Key (POS) o JWT (frontend)
+// Usuarios: autenticación dual + solo administrador
+// Solo el admin puede gestionar usuarios
 router.use(autenticarDual);
+router.use(soloAdministrador);
 
 // ─────────────────────────────────────────────
 // RUTAS — específicas ANTES de /:id
