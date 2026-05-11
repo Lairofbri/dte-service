@@ -10,11 +10,12 @@
 const { Router }           = require('express');
 const controller           = require('./auditoria.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
+const { autenticarDual }   = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
-// Todas las rutas requieren API Key
-router.use(autenticarApiKey);
+// Todas las rutas aceptan API Key (POS) o JWT (frontend)
+router.use(autenticarDual);
 
 // ─────────────────────────────────────────────
 // IMPORTANTE: rutas específicas ANTES de /:id

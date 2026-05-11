@@ -7,11 +7,12 @@
 const { Router }        = require('express');
 const controller        = require('./configuracion.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
+const { autenticarDual }   = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
-// Todas las rutas de configuración requieren API Key
-router.use(autenticarApiKey);
+// Todas las rutas aceptan API Key (POS) o JWT (frontend)
+router.use(autenticarDual);
 
 // GET /api/configuracion — ver configuración actual (sin credenciales)
 router.get('/', controller.obtenerConfiguracion);
