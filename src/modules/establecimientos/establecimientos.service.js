@@ -120,15 +120,16 @@ const crearEstablecimiento = async ({ datos }) => {
     telefono, email,
   } = datos;
 
-  // Verificar que cod_estable_mh no existe ya
+  // Verificar que la combinación cod_estable_mh + cod_punto_venta_mh no existe ya
+  // Una sucursal puede tener varias cajas — la combinación debe ser única
   const { rows: existe } = await query(
-    'SELECT id FROM establecimientos WHERE cod_estable_mh = $1',
-    [cod_estable_mh]
+    'SELECT id FROM establecimientos WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2',
+    [cod_estable_mh, cod_punto_venta_mh]
   );
   if (existe.length > 0) {
     throw {
       status:  409,
-      mensaje: `Ya existe un establecimiento con el código ${cod_estable_mh} de Hacienda.`,
+      mensaje: `Ya existe una caja con código ${cod_punto_venta_mh} en la sucursal ${cod_estable_mh}.`,
     };
   }
 
