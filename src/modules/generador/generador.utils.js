@@ -146,7 +146,8 @@ const obtenerSiguienteCorrelativo = async (
   if (lockRows.length === 0) {
     await client.query(
       `INSERT INTO correlativos (tipo_dte, ambiente, establecimiento_id, ultimo_numero)
-       VALUES ($1, $2, $3, 0)`,
+       VALUES ($1, $2, $3, 0)
+       ON CONFLICT DO NOTHING`,
       [tipoDte, ambiente, establecimientoId]
     );
   }
@@ -302,7 +303,8 @@ const construirItem = (item, numItem, tipoDte) => {
     ventaNoSuj:      0.0,
     ventaExenta:     0.0,
     ventaGravada:    ventaGravada,
-    tributos:        tipoDte === '01' ? null : ['20'],
+    // tributos: null en FCF y FSE, ['20'] solo en CCF
+    tributos:        tipoDte === '03' ? ['20'] : null,
     psv:             0.0,
     noGravado:       0.0,
   };
@@ -342,6 +344,9 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null) 
     ivaValor = redondear2(totalGravada - (totalGravada / 1.13));
   }
 
+  // CCF: precio sin IVA → montoTotal = subTotal + IVA
+  // FCF: precio con IVA → montoTotal = subTotal (IVA ya incluido)
+  // FSE: sin IVA → montoTotal = subTotal
   const montoTotalOperacion = tipoDte === '03'
     ? redondear2(subTotal + ivaValor)
     : redondear2(subTotal);
