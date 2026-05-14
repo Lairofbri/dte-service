@@ -40,10 +40,9 @@ CREATE TABLE IF NOT EXISTS establecimientos (
   creado_en           TIMESTAMPTZ DEFAULT NOW(),
   actualizado_en      TIMESTAMPTZ DEFAULT NOW(),
 
-  -- cod_estable_mh único — Hacienda no permite duplicados por empresa
-  UNIQUE(cod_estable_mh),
-  -- UNIQUE compuesto para FK tenant-safe en otras tablas
-  UNIQUE(id, cod_estable_mh)
+  -- La combinación sucursal + caja debe ser única
+  -- Una sucursal puede tener múltiples cajas con diferente cod_punto_venta_mh
+  UNIQUE(cod_estable_mh, cod_punto_venta_mh)
 );
 
 CREATE TRIGGER trigger_establecimientos_updated
