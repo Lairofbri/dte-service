@@ -72,10 +72,10 @@ const crearEstablecimientoSchema = Joi.object({
     }),
   municipio_cod: Joi.string()
     .length(2)
-    .pattern(/^(0[1-9]|[1-9][0-9])$/)
+    .pattern(/^([0-9]{2})$/)
     .required()
     .messages({
-      'string.pattern.base': 'El código de municipio debe ser numérico del 01 al 99.',
+      'string.pattern.base': 'El código de municipio/distrito debe ser numérico (00-99).',
       'string.length':       'El código de municipio debe tener 2 dígitos.',
       'any.required':        'El código de municipio es requerido.',
     }),
@@ -131,10 +131,10 @@ const actualizarEstablecimientoSchema = Joi.object({
     }),
   municipio_cod: Joi.string()
     .length(2)
-    .pattern(/^(0[1-9]|[1-9][0-9])$/)
+    .pattern(/^([0-9]{2})$/)
     .optional()
     .messages({
-      'string.pattern.base': 'El código de municipio debe ser numérico del 01 al 99.',
+      'string.pattern.base': 'El código de municipio/distrito debe ser numérico (00-99).',
     }),
   telefono: Joi.string().max(20).optional().allow('', null),
   email:    Joi.string()
