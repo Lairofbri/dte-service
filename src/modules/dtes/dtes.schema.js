@@ -30,7 +30,12 @@ const itemSchema = Joi.object({
   tipo_item:  Joi.number().integer().valid(1, 2, 3, 4).optional().default(2),
   // CAT-014: 59=Unidad, 99=Otro, etc.
   uni_medida: Joi.number().integer().min(1).max(99).optional().default(59),
-}).or('descripcion', 'nombre_producto');
+}).rename('nombre_producto', 'descripcion', {
+    alias: false,
+    override: false,
+    ignoreUndefined: true,
+  })
+  .or('descripcion', 'nombre_producto');
 
 // Pago individual
 const pagoSchema = Joi.object({
