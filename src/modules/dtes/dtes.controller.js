@@ -56,8 +56,14 @@ const emitirFCF = async (req, res) => {
   const { error: validacionError, value } = emitirFCFSchema.validate(req.body);
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
+  // establecimiento_id siempre del JWT — nunca del body
+  const datos = {
+    ...value,
+    establecimiento_id: req.usuario?.establecimiento_id || null,
+  };
+
   try {
-    const resultado = await service.emitirFCF({ datos: value, ip: req.ip });
+    const resultado = await service.emitirFCF({ datos, ip: req.ip });
     const status    = resultado.estado === 'contingencia' ? 202 : 201;
     return res.status(status).json({ ok: true, data: resultado });
   } catch (err) {
@@ -73,8 +79,13 @@ const emitirCCF = async (req, res) => {
   const { error: validacionError, value } = emitirCCFSchema.validate(req.body);
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
+  const datos = {
+    ...value,
+    establecimiento_id: req.usuario?.establecimiento_id || null,
+  };
+
   try {
-    const resultado = await service.emitirCCF({ datos: value, ip: req.ip });
+    const resultado = await service.emitirCCF({ datos, ip: req.ip });
     const status    = resultado.estado === 'contingencia' ? 202 : 201;
     return res.status(status).json({ ok: true, data: resultado });
   } catch (err) {
@@ -122,8 +133,28 @@ const emitirFSE = async (req, res) => {
   const { error: validacionError, value } = emitirFSESchema.validate(req.body);
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
+  // Normalizar sujeto_excluido → receptor para el service
+  // El POS puede enviar sujeto_excluido, el frontend envía receptor
+  const receptor = value.receptor || (value.sujeto_excluido ? {
+    nit:            value.sujeto_excluido.nit,
+    nombre:         value.sujeto_excluido.nombre,
+    cod_actividad:  value.sujeto_excluido.cod_actividad || value.sujeto_excluido.codigo_actividad,
+    desc_actividad: value.sujeto_excluido.desc_actividad,
+    correo:         value.sujeto_excluido.correo || value.sujeto_excluido.email,
+    telefono:       value.sujeto_excluido.telefono,
+    direccion:      value.sujeto_excluido.direccion,
+    departamento_cod: value.sujeto_excluido.departamento_cod,
+    municipio_cod:  value.sujeto_excluido.municipio_cod,
+  } : null);
+
+  const datos = {
+    ...value,
+    receptor,
+    establecimiento_id: req.usuario?.establecimiento_id || null,
+  };
+
   try {
-    const resultado = await service.emitirFSE({ datos: value, ip: req.ip });
+    const resultado = await service.emitirFSE({ datos, ip: req.ip });
     const status    = resultado.estado === 'contingencia' ? 202 : 201;
     return res.status(status).json({ ok: true, data: resultado });
   } catch (err) {
