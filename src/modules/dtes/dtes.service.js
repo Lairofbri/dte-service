@@ -40,6 +40,7 @@ const guardarDTE = async ({
   erroresHacienda, observaciones, ordenReferencia,
   totalGravado, totalIva, total,
   receptorNombre, receptorNit, receptorNrc,
+  establecimientoId, condicionOperacion,
 }) => {
   const { rows } = await query(
     `INSERT INTO dtes (
@@ -48,8 +49,9 @@ const guardarDTE = async ({
        errores_hacienda, observaciones, orden_referencia,
        receptor_nombre, receptor_nit, receptor_nrc,
        total_gravado, total_iva, total,
-       fecha_emision, hora_emision
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       fecha_emision, hora_emision,
+       establecimiento_id, condicion_operacion
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
      RETURNING id, tipo_dte, codigo_generacion, numero_control,
                estado, sello_recepcion, fecha_emision, hora_emision,
                receptor_nombre, receptor_nit, receptor_nrc,
@@ -74,6 +76,8 @@ const guardarDTE = async ({
       total              || 0,
       jsonDte.identificacion.fecEmi,
       jsonDte.identificacion.horEmi,
+      establecimientoId  || null,
+      condicionOperacion || 1,
     ]
   );
   return rows[0];
@@ -154,17 +158,18 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
       tipoDte,
       codigoGeneracion,
       numeroControl,
-      ambiente:        jsonDte.identificacion.ambiente,
-      estado:          'generado',
+      ambiente:          jsonDte.identificacion.ambiente,
+      estado:            'generado',
       jsonDte,
-      ordenReferencia: datos.orden_referencia || null,
-      totalGravado:    resumen.totalGravada    || 0,
-      totalIva:        resumen.totalIva        || 0,
-      total:           resumen.totalPagar      || resumen.totalCompra || 0,
-      // Receptor para búsquedas rápidas
-      receptorNombre:  jsonDte.receptor?.nombre || jsonDte.sujetoExcluido?.nombre || null,
-      receptorNit:     jsonDte.receptor?.nit    || null,
-      receptorNrc:     jsonDte.receptor?.nrc    || null,
+      ordenReferencia:   datos.orden_referencia  || null,
+      totalGravado:      resumen.totalGravada     || 0,
+      totalIva:          resumen.totalIva         || resumen.totalIva || 0,
+      total:             resumen.totalPagar       || resumen.totalCompra || 0,
+      receptorNombre:    jsonDte.receptor?.nombre || jsonDte.sujetoExcluido?.nombre || null,
+      receptorNit:       jsonDte.receptor?.nit    || jsonDte.receptor?.numDocumento || null,
+      receptorNrc:       jsonDte.receptor?.nrc    || null,
+      establecimientoId: datos.establecimiento_id || null,
+      condicionOperacion: resumen.condicionOperacion || 1,
     });
 
     await registrarAuditoria('DTE_GENERADO', dteGuardado.id, {

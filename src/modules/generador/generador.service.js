@@ -1,230 +1,149 @@
 // src/modules/generador/generador.service.js
-// Construye el JSON de cada tipo de DTE según los esquemas oficiales
-// de Hacienda El Salvador
-//
-// IMPORTANTE: Este módulo NO firma ni transmite — solo construye el JSON
-// El JSON generado debe pasar por el firmador antes de ir a Hacienda
+// Construye el JSON de cada tipo de DTE según esquemas oficiales Hacienda
+// Actualizado para cumplir con JSONs reales aceptados y catálogos v1.2
 
-const { getClient } = require('../../config/database');
-const configuracionService = require('../configuracion/configuracion.service');
-const logger = require('../../utils/logger');
+const { getClient }         = require('../../config/database');
+const configuracionService  = require('../configuracion/configuracion.service');
+const logger                = require('../../utils/logger');
 const {
   TIPOS_DTE,
-  FORMAS_PAGO,
+  CAMPOS_RAIZ_NULL,
   generarCodigoGeneracion,
   formatearNIT,
-  formatearNRC,
-  redondear8,
   redondear2,
   numeroALetras,
   obtenerSiguienteCorrelativo,
   construirIdentificacion,
   construirEmisor,
-  calcularResumen,
+  construirReceptorFCF,
+  construirReceptorCCF,
+  construirReceptorFSE,
+  construirItem,
+  construirResumen,
+  construirExtension,
 } = require('./generador.utils');
 
 // ─────────────────────────────────────────────
-// HELPER: construir pagos desde método de pago del POS
+// HELPER: obtener config + establecimiento del usuario
+// El establecimiento del usuario determina los códigos MH del emisor
 // ─────────────────────────────────────────────
-
-/**
- * Convierte el método de pago del POS al formato de pagos del DTE
- * @param {string} metodoPago — efectivo | tarjeta | mixto
- * @param {number} montoEfectivo
- * @param {number} montoTarjeta
- * @param {number} totalPagar
- */
-const construirPagos = (metodoPago, montoEfectivo, montoTarjeta, totalPagar) => {
-  if (metodoPago === 'efectivo') {
-    return [{ codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null }];
+const obtenerConfigYEstablecimiento = async (establecimientoId) => {
+  const config = await configuracionService.obtenerConfiguracion();
+  if (!establecimientoId) {
+    throw { status: 400, mensaje: 'Se requiere el establecimiento del usuario para emitir DTEs.' };
   }
+
+  const { query } = require('../../config/database');
+  const { rows } = await query(
+    `SELECT id, nombre, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta,
+            tipo_establecimiento, departamento_cod, municipio_cod, direccion, telefono, correo
+     FROM establecimientos
+     WHERE id = $1 AND activo = true`,
+    [establecimientoId]
+  );
+
+  if (rows.length === 0) {
+    throw { status: 404, mensaje: 'Establecimiento no encontrado o inactivo.' };
+  }
+
+  return { config, establecimiento: rows[0] };
+};
+
+// ─────────────────────────────────────────────
+// HELPER: construir pagos
+// ─────────────────────────────────────────────
+const construirPagos = (metodoPago, montoEfectivo, montoTarjeta, totalPagar) => {
   if (metodoPago === 'tarjeta') {
     return [{ codigo: '03', montoPago: totalPagar, referencia: null, plazo: null, periodo: null }];
   }
   if (metodoPago === 'mixto') {
     const pagos = [];
-    if (montoEfectivo > 0) {
-      pagos.push({ codigo: '01', montoPago: redondear2(montoEfectivo), referencia: null, plazo: null, periodo: null });
-    }
-    if (montoTarjeta > 0) {
-      pagos.push({ codigo: '03', montoPago: redondear2(montoTarjeta), referencia: null, plazo: null, periodo: null });
-    }
-    return pagos;
+    if (Number(montoEfectivo) > 0) pagos.push({ codigo: '01', montoPago: redondear2(montoEfectivo), referencia: null, plazo: null, periodo: null });
+    if (Number(montoTarjeta) > 0)  pagos.push({ codigo: '03', montoPago: redondear2(montoTarjeta),  referencia: null, plazo: null, periodo: null });
+    return pagos.length > 0 ? pagos : [{ codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null }];
   }
+  // default: efectivo
   return [{ codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null }];
 };
 
-/**
- * Construye los items del cuerpoDocumento para FCF y CCF
- * Los precios del POS incluyen IVA — hay que desglosarlo para el DTE
- */
-const construirCuerpoDocumento = (items, tipoDte) => {
-  return items.map((item, idx) => {
-    const precioConIva  = redondear8(item.precio_unitario);
-    const descuentoItem = redondear8(item.descuento || 0);
-
-    // Para FCF (01): precio incluye IVA, ventaGravada = precio - descuento
-    // Para CCF (03): precio sin IVA, IVA se calcula en resumen
-    // Los precios en el POS SIEMPRE incluyen IVA
-    const ventaGravada = redondear8((precioConIva * item.cantidad) - descuentoItem);
-
-    return {
-      numItem:         idx + 1,
-      tipoItem:        2, // 2 = Servicio (restaurantes)
-      numeroDocumento: null,
-      codigo:          item.codigo || null,
-      codTributo:      null,
-      descripcion:     item.nombre_producto || item.descripcion,
-      cantidad:        redondear8(item.cantidad),
-      uniMedida:       59, // 59 = Unidad
-      precioUni:       precioConIva,
-      montoDescu:      descuentoItem,
-      ventaNoSuj:      0,
-      ventaExenta:     0,
-      ventaGravada,
-      tributos:        ventaGravada > 0 ? ['20'] : null, // 20 = IVA
-      psv:             0,
-      noGravado:       0,
-      ivaItem:         tipoDte === '01'
-        ? redondear8(ventaGravada - (ventaGravada / 1.13))
-        : 0, // FCF incluye ivaItem, CCF no
-    };
-  });
-};
-
 // ═════════════════════════════════════════════
-// GENERADORES POR TIPO DE DTE
+// GENERADORES
 // ═════════════════════════════════════════════
 
 /**
- * Genera el JSON de una Factura Consumidor Final (FCF - 01)
- * Basado en el esquema fe-fc-v1.json
- *
- * @param {object} datos
- * @param {Array}  datos.items        — items de la orden
- * @param {object} datos.receptor     — datos del receptor (opcional para montos < $1,095)
- * @param {string} datos.metodopago   — efectivo | tarjeta | mixto
- * @param {number} datos.montoefectivo
- * @param {number} datos.montotarjeta
- * @param {number} datos.porcentajedescuento
- * @param {string} datos.ordenreferencia — ID de la orden en el POS
- * @param {boolean} datos.escontingencia
+ * Factura Consumidor Final (FCF - DTE-01)
+ * Receptor: tipoDocumento + numDocumento (NO nit separado)
+ * Items: precio con IVA incluido, ivaItem desglosado
+ * Resumen: totalIva incluido
  */
 const generarFCF = async (datos) => {
-  const config = await configuracionService.obtenerConfiguracion();
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
   const client = await getClient();
 
   try {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client,
-      '01',
-      config.ambiente,
-      config.codigo_establecimiento || '0001'
+      client, '01', config.ambiente,
+      establecimiento.id,
+      establecimiento.cod_estable_mh,
+      establecimiento.cod_punto_venta_mh
     );
 
     const codigoGeneracion = generarCodigoGeneracion();
-    const cuerpoDocumento  = construirCuerpoDocumento(datos.items, '01');
-    const resumenCalc      = calcularResumen(cuerpoDocumento, datos.porcentajedescuento || 0);
-    const pagos            = construirPagos(
-      datos.metodopago,
-      datos.montoefectivo || 0,
-      datos.montotarjeta  || 0,
-      resumenCalc.totalPagar
+    const tipoDte          = '01';
+
+    // Construir ítems
+    const cuerpoDocumento = (datos.items || []).map((item, idx) =>
+      construirItem(item, idx + 1, tipoDte)
     );
 
-    // Receptor — requerido si monto >= $1,095 según esquema FCF (fe-fc-v1.json)
-    // Cuando monto >= $1,095: tipoDocumento, numDocumento y nombre deben ser strings
-    let receptor = null;
+    // Condición de operación y pagos
+    const condicion = datos.condicion_operacion || 1;
+    const pagos     = datos.pagos || construirPagos(
+      datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, 0
+    );
 
-    if (resumenCalc.montoTotalOperacion >= 1095) {
-      // Aceptar nombre O razon_social — en El Salvador las empresas usan razon_social
-      const nombreReceptor = datos.receptor?.nombre || datos.receptor?.razon_social;
-      if (!nombreReceptor) {
-        throw {
-          status: 400,
-          mensaje: `Para ventas mayores a $1,095.00 el nombre o razón social del receptor es requerido. Total: $${resumenCalc.montoTotalOperacion}`,
-        };
-      }
-      if (!datos.receptor?.tipo_documento) {
-        throw {
-          status: 400,
-          mensaje: `Para ventas mayores a $1,095.00 el tipo de documento del receptor es requerido.`,
-        };
-      }
-      if (!datos.receptor?.numero_documento) {
-        throw {
-          status: 400,
-          mensaje: `Para ventas mayores a $1,095.00 el número de documento del receptor es requerido.`,
-        };
-      }
+    // Resumen
+    const resumen = construirResumen(cuerpoDocumento, tipoDte, condicion, null);
+
+    // Actualizar montoPago con el total real
+    if (pagos.length > 0 && !datos.pagos) {
+      pagos[0].montoPago = resumen.totalPagar;
     }
+    resumen.pagos = pagos;
 
-    if (datos.receptor) {
-      // Aceptar nombre O razon_social
-      const nombreReceptor = datos.receptor.nombre || datos.receptor.razon_social;
-      if (!nombreReceptor) {
-        throw { status: 400, mensaje: 'El nombre o razón social del receptor es requerido.' };
-      }
-
-      receptor = {
-        tipoDocumento:  datos.receptor.tipo_documento    || null,
-        numDocumento:   datos.receptor.numero_documento  || null,
-        nrc:            null,
-        nombre:         nombreReceptor,
-        codActividad:   null,
-        descActividad:  null,
-        direccion:      datos.receptor.departamento_cod ? {
-          departamento: datos.receptor.departamento_cod,
-          municipio:    datos.receptor.municipio_cod,
-          complemento:  datos.receptor.direccion,
-        } : null,
-        telefono:       datos.receptor.telefono || null,
-        correo:         datos.receptor.email    || null,
+    // Validación: monto >= $1,095 requiere datos del receptor
+    if (resumen.montoTotalOperacion >= 1095 && !datos.receptor?.nombre) {
+      throw {
+        status:  400,
+        mensaje: `Para ventas >= $1,095.00 se requiere el nombre del receptor. Total: $${resumen.montoTotalOperacion}`,
       };
     }
 
+    // Receptor — puede ser null para montos menores
+    const receptor = datos.receptor ? construirReceptorFCF(datos.receptor) : null;
+
     const json = {
-      identificacion:    construirIdentificacion({
-        tipoDte:           '01',
-        numeroControl,
-        codigoGeneracion,
-        ambiente:          config.ambiente,
-        esContingencia:    datos.escontingencia || false,
-        tipoContingencia:  datos.tipocontingencia || null,
-        motivoContingencia: datos.motivocontingencia || null,
+      identificacion: construirIdentificacion({
+        tipoDte, numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        esContingencia:    datos.es_contingencia    || false,
+        tipoContingencia:  datos.tipo_contingencia  || null,
+        motivoContingencia: datos.motivo_contingencia || null,
       }),
-      documentoRelacionado: null,
-      emisor:            construirEmisor(config),
+      ...CAMPOS_RAIZ_NULL,
+      emisor:   construirEmisor(config, establecimiento),
       receptor,
-      otrosDocumentos:   null,
-      ventaTercero:      null,
       cuerpoDocumento,
-      resumen: {
-        ...resumenCalc,
-        tributos:       resumenCalc.totalGravada > 0
-          ? [{ codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: resumenCalc.totalIva }]
-          : null,
-        totalLetras:    numeroALetras(resumenCalc.totalPagar),
-        condicionOperacion: 1, // 1 = Contado
-        pagos,
-        numPagoElectronico: null,
-      },
-      extension:  null,
-      apendice:   null,
+      resumen,
+      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
 
-    logger.info('JSON FCF generado', {
-      numero_control:    numeroControl,
-      codigo_generacion: codigoGeneracion,
-      total:             resumenCalc.totalPagar,
-      correlativo,
-    });
+    logger.info('JSON FCF generado', { numeroControl, codigoGeneracion, total: resumen.totalPagar, correlativo });
 
-    return { json, codigoGeneracion, numeroControl, tipoDte: '01', version: 1 };
+    return { json, codigoGeneracion, numeroControl, tipoDte, version: TIPOS_DTE[tipoDte].version };
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -235,185 +154,65 @@ const generarFCF = async (datos) => {
 };
 
 /**
- * Genera el JSON de un Comprobante de Crédito Fiscal (CCF - 03)
- * Basado en el esquema fe-ccf-v3.json
- * Requiere datos completos del receptor (NIT, NRC, razón social, etc.)
+ * Comprobante de Crédito Fiscal (CCF - DTE-03)
+ * Receptor: nit/nrc con datos completos
+ * Items: precio sin IVA, IVA calculado en resumen
  */
 const generarCCF = async (datos) => {
   if (!datos.receptor?.nit) {
     throw { status: 400, mensaje: 'El CCF requiere el NIT del receptor.' };
   }
-  if (!datos.receptor?.nrc) {
-    throw { status: 400, mensaje: 'El CCF requiere el NRC del receptor.' };
-  }
 
-  const config = await configuracionService.obtenerConfiguracion();
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
   const client = await getClient();
 
   try {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client,
-      '03',
-      config.ambiente,
-      config.codigo_establecimiento || '0001'
+      client, '03', config.ambiente,
+      establecimiento.id,
+      establecimiento.cod_estable_mh,
+      establecimiento.cod_punto_venta_mh
     );
 
     const codigoGeneracion = generarCodigoGeneracion();
-    const cuerpoDocumento  = construirCuerpoDocumento(datos.items, '03');
-    const resumenCalc      = calcularResumen(cuerpoDocumento, datos.porcentajedescuento || 0);
-    const pagos            = construirPagos(
-      datos.metodopago,
-      datos.montoefectivo || 0,
-      datos.montotarjeta  || 0,
-      resumenCalc.totalPagar
+    const tipoDte          = '03';
+
+    const cuerpoDocumento = (datos.items || []).map((item, idx) =>
+      construirItem(item, idx + 1, tipoDte)
     );
 
-    // Receptor CCF — todos los campos son requeridos
-    const receptor = {
-      nit:            formatearNIT(datos.receptor.nit),
-      nrc:            formatearNRC(datos.receptor.nrc),
-      nombre:         datos.receptor.nombre || datos.receptor.razon_social,
-      codActividad:   datos.receptor.codigo_actividad || null,
-      descActividad:  datos.receptor.desc_actividad   || null,
-      nombreComercial: datos.receptor.nombre_comercial || null,
-      direccion:      datos.receptor.departamento_cod ? {
-        departamento: datos.receptor.departamento_cod,
-        municipio:    datos.receptor.municipio_cod,
-        complemento:  datos.receptor.direccion,
-      } : null,
-      telefono:       datos.receptor.telefono || null,
-      correo:         datos.receptor.email    || null,
-    };
+    const condicion = datos.condicion_operacion || 1;
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null);
 
-    const json = {
-      identificacion:    construirIdentificacion({
-        tipoDte:           '03',
-        numeroControl,
-        codigoGeneracion,
-        ambiente:          config.ambiente,
-        esContingencia:    datos.escontingencia || false,
-        tipoContingencia:  datos.tipocontingencia || null,
-        motivoContingencia: datos.motivocontingencia || null,
-      }),
-      documentoRelacionado: null,
-      emisor:            construirEmisor(config),
-      receptor,
-      ventaTercero:      null,
-      cuerpoDocumento,
-      resumen: {
-        ...resumenCalc,
-        ivaPerci1:      0, // IVA percibido — 0 para restaurantes normales
-        tributos:       resumenCalc.totalGravada > 0
-          ? [{ codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: resumenCalc.totalIva }]
-          : null,
-        totalLetras:    numeroALetras(resumenCalc.totalPagar),
-        condicionOperacion: 1,
-        pagos,
-        numPagoElectronico: null,
-      },
-      extension:  null,
-      apendice:   null,
-    };
-
-    await client.query('COMMIT');
-
-    logger.info('JSON CCF generado', {
-      numero_control:    numeroControl,
-      codigo_generacion: codigoGeneracion,
-      receptor_nit:      receptor.nit,
-      total:             resumenCalc.totalPagar,
-    });
-
-    return { json, codigoGeneracion, numeroControl, tipoDte: '03', version: 3 };
-
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-};
-
-/**
- * Genera el JSON de una Nota de Crédito (NC - 05)
- * Basado en el esquema fe-nc-v3.json
- * Requiere documentoRelacionado — el DTE original que se está corrigiendo
- */
-const generarNotaCredito = async (datos) => {
-  if (!datos.documento_relacionado?.codigo_generacion) {
-    throw { status: 400, mensaje: 'La Nota de Crédito requiere el documento relacionado.' };
-  }
-
-  const config = await configuracionService.obtenerConfiguracion();
-  const client = await getClient();
-
-  try {
-    await client.query('BEGIN');
-
-    const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '05', config.ambiente, config.codigo_establecimiento || '0001'
-    );
-
-    const codigoGeneracion = generarCodigoGeneracion();
-    const cuerpoDocumento  = construirCuerpoDocumento(datos.items, '05');
-    const resumenCalc      = calcularResumen(cuerpoDocumento, 0);
-
-    const receptor = {
-      nit:            formatearNIT(datos.receptor?.nit),
-      nrc:            formatearNRC(datos.receptor?.nrc),
-      nombre:         datos.receptor?.nombre || datos.receptor?.razon_social,
-      codActividad:   datos.receptor?.codigo_actividad || null,
-      descActividad:  datos.receptor?.desc_actividad   || null,
-      nombreComercial: datos.receptor?.nombre_comercial || null,
-      direccion:      datos.receptor?.departamento_cod ? {
-        departamento: datos.receptor.departamento_cod,
-        municipio:    datos.receptor.municipio_cod,
-        complemento:  datos.receptor.direccion,
-      } : null,
-      telefono:       datos.receptor?.telefono || null,
-      correo:         datos.receptor?.email    || null,
-    };
+    // Pagos default para CCF
+    if (!datos.pagos) {
+      resumen.pagos = construirPagos(
+        datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, resumen.totalPagar
+      );
+    }
 
     const json = {
       identificacion: construirIdentificacion({
-        tipoDte: '05', numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        tipoDte, numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        esContingencia:    datos.es_contingencia    || false,
+        tipoContingencia:  datos.tipo_contingencia  || null,
+        motivoContingencia: datos.motivo_contingencia || null,
       }),
-      documentoRelacionado: [{
-        tipoDocumento:   datos.documento_relacionado.tipo_dte || '01',
-        tipoGeneracion:  2, // 2 = electrónico
-        numeroDocumento: datos.documento_relacionado.codigo_generacion.toUpperCase(),
-        fechaEmision:    datos.documento_relacionado.fecha_emision,
-      }],
-      emisor:   construirEmisor(config),
-      receptor,
-      ventaTercero: null,
+      ...CAMPOS_RAIZ_NULL,
+      emisor:          construirEmisor(config, establecimiento),
+      receptor:        construirReceptorCCF(datos.receptor),
       cuerpoDocumento,
-      resumen: {
-        ...resumenCalc,
-        ivaPerci1:  0,
-        ivaRete1:   0,
-        reteRenta:  0,
-        tributos:   resumenCalc.totalGravada > 0
-          ? [{ codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: resumenCalc.totalIva }]
-          : null,
-        totalLetras: numeroALetras(resumenCalc.totalPagar),
-        condicionOperacion: 1,
-      },
-      extension: null,
-      apendice:  null,
+      resumen,
+      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
 
-    logger.info('JSON Nota de Crédito generado', {
-      numero_control: numeroControl,
-      codigo_generacion: codigoGeneracion,
-      doc_relacionado: datos.documento_relacionado.codigo_generacion,
-    });
+    logger.info('JSON CCF generado', { numeroControl, codigoGeneracion, total: resumen.totalPagar, correlativo });
 
-    return { json, codigoGeneracion, numeroControl, tipoDte: '05', version: 3 };
+    return { json, codigoGeneracion, numeroControl, tipoDte, version: TIPOS_DTE[tipoDte].version };
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -424,180 +223,60 @@ const generarNotaCredito = async (datos) => {
 };
 
 /**
- * Genera el JSON de una Nota de Débito (ND - 06)
- * Basado en el esquema fe-nd-v3.json
- * Similar a la Nota de Crédito pero aumenta el monto
- */
-const generarNotaDebito = async (datos) => {
-  if (!datos.documento_relacionado?.codigo_generacion) {
-    throw { status: 400, mensaje: 'La Nota de Débito requiere el documento relacionado.' };
-  }
-
-  const config = await configuracionService.obtenerConfiguracion();
-  const client = await getClient();
-
-  try {
-    await client.query('BEGIN');
-
-    const { numeroControl } = await obtenerSiguienteCorrelativo(
-      client, '06', config.ambiente, config.codigo_establecimiento || '0001'
-    );
-
-    const codigoGeneracion = generarCodigoGeneracion();
-    const cuerpoDocumento  = construirCuerpoDocumento(datos.items, '06');
-    const resumenCalc      = calcularResumen(cuerpoDocumento, 0);
-
-    const receptor = {
-      nit:            formatearNIT(datos.receptor?.nit),
-      nrc:            formatearNRC(datos.receptor?.nrc),
-      nombre:         datos.receptor?.nombre || datos.receptor?.razon_social,
-      codActividad:   datos.receptor?.codigo_actividad || null,
-      descActividad:  datos.receptor?.desc_actividad   || null,
-      nombreComercial: datos.receptor?.nombre_comercial || null,
-      direccion:      datos.receptor?.departamento_cod ? {
-        departamento: datos.receptor.departamento_cod,
-        municipio:    datos.receptor.municipio_cod,
-        complemento:  datos.receptor.direccion,
-      } : null,
-      telefono:       datos.receptor?.telefono || null,
-      correo:         datos.receptor?.email    || null,
-    };
-
-    const json = {
-      identificacion: construirIdentificacion({
-        tipoDte: '06', numeroControl, codigoGeneracion, ambiente: config.ambiente,
-      }),
-      documentoRelacionado: [{
-        tipoDocumento:   datos.documento_relacionado.tipo_dte || '01',
-        tipoGeneracion:  2,
-        numeroDocumento: datos.documento_relacionado.codigo_generacion.toUpperCase(),
-        fechaEmision:    datos.documento_relacionado.fecha_emision,
-      }],
-      emisor:   construirEmisor(config),
-      receptor,
-      ventaTercero: null,
-      cuerpoDocumento,
-      resumen: {
-        ...resumenCalc,
-        ivaPerci1:  0,
-        ivaRete1:   0,
-        reteRenta:  0,
-        tributos:   resumenCalc.totalGravada > 0
-          ? [{ codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: resumenCalc.totalIva }]
-          : null,
-        totalLetras: numeroALetras(resumenCalc.totalPagar),
-        condicionOperacion: 1,
-      },
-      extension: null,
-      apendice:  null,
-    };
-
-    await client.query('COMMIT');
-
-    logger.info('JSON Nota de Débito generado', {
-      numero_control: numeroControl,
-      codigo_generacion: codigoGeneracion,
-    });
-
-    return { json, codigoGeneracion, numeroControl, tipoDte: '06', version: 3 };
-
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-};
-
-/**
- * Genera el JSON de una Factura de Sujeto Excluido (FSE - 14)
- * Basado en el esquema fe-fse-v1.json
- * Para compras a personas naturales no inscritas en el IVA
+ * Factura Sujeto Excluido (FSE - DTE-14)
+ * Sin IVA — para compras a personas naturales no inscritas
  */
 const generarFSE = async (datos) => {
-  if (!datos.sujeto_excluido?.nombre) {
-    throw { status: 400, mensaje: 'La FSE requiere los datos del sujeto excluido.' };
+  if (!datos.receptor?.nit) {
+    throw { status: 400, mensaje: 'La FSE requiere el NIT del receptor.' };
   }
 
-  const config = await configuracionService.obtenerConfiguracion();
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
   const client = await getClient();
 
   try {
     await client.query('BEGIN');
 
-    const { numeroControl } = await obtenerSiguienteCorrelativo(
-      client, '14', config.ambiente, config.codigo_establecimiento || '0001'
+    const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
+      client, '14', config.ambiente,
+      establecimiento.id,
+      establecimiento.cod_estable_mh,
+      establecimiento.cod_punto_venta_mh
     );
 
     const codigoGeneracion = generarCodigoGeneracion();
+    const tipoDte          = '14';
 
-    // FSE tiene su propio formato de cuerpoDocumento
-    const cuerpoDocumento = datos.items.map((item, idx) => ({
-      numItem:     idx + 1,
-      tipoItem:    2,
-      cantidad:    redondear8(item.cantidad),
-      codigo:      item.codigo || null,
-      uniMedida:   59,
-      descripcion: item.nombre_producto || item.descripcion,
-      precioUni:   redondear8(item.precio_unitario),
-      montoDescu:  redondear8(item.descuento || 0),
-      compra:      redondear8((item.precio_unitario * item.cantidad) - (item.descuento || 0)),
-    }));
-
-    const totalCompra = redondear2(cuerpoDocumento.reduce((s, i) => s + i.compra, 0));
-    const totalDescu  = redondear2(cuerpoDocumento.reduce((s, i) => s + i.montoDescu, 0));
-    const subTotal    = redondear2(totalCompra - totalDescu);
-    const totalPagar  = subTotal;
-
-    const pagos = construirPagos(
-      datos.metodoPago, datos.montoEfectivo || 0, datos.montoTarjeta || 0, totalPagar
+    const cuerpoDocumento = (datos.items || []).map((item, idx) =>
+      construirItem(item, idx + 1, tipoDte)
     );
+
+    const condicion = datos.condicion_operacion || 1;
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null);
+
+    if (!datos.pagos) {
+      resumen.pagos = construirPagos(
+        datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, resumen.totalPagar
+      );
+    }
 
     const json = {
       identificacion: construirIdentificacion({
-        tipoDte: '14', numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        tipoDte, numeroControl, codigoGeneracion, ambiente: config.ambiente,
       }),
-      emisor: construirEmisor(config),
-      sujetoExcluido: {
-        tipoDocumento:  datos.sujeto_excluido.tipo_documento || '13',
-        numDocumento:   datos.sujeto_excluido.numero_documento,
-        nombre:         datos.sujeto_excluido.nombre,
-        codActividad:   datos.sujeto_excluido.codigo_actividad || null,
-        descActividad:  datos.sujeto_excluido.desc_actividad   || null,
-        direccion:      datos.sujeto_excluido.departamento_cod ? {
-          departamento: datos.sujeto_excluido.departamento_cod,
-          municipio:    datos.sujeto_excluido.municipio_cod,
-          complemento:  datos.sujeto_excluido.direccion,
-        } : null,
-        telefono:       datos.sujeto_excluido.telefono || null,
-        correo:         datos.sujeto_excluido.email    || null,
-      },
+      ...CAMPOS_RAIZ_NULL,
+      emisor:          construirEmisor(config, establecimiento),
+      receptor:        construirReceptorFSE(datos.receptor),
       cuerpoDocumento,
-      resumen: {
-        totalCompra,
-        descu:        totalDescu,
-        totalDescu,
-        subTotal,
-        ivaRete1:     0,
-        reteRenta:    0,
-        totalPagar,
-        totalLetras:  numeroALetras(totalPagar),
-        condicionOperacion: 1,
-        pagos,
-        observaciones: datos.observaciones || null,
-      },
-      apendice: null,
+      resumen,
+      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
 
-    logger.info('JSON FSE generado', {
-      numero_control: numeroControl,
-      codigo_generacion: codigoGeneracion,
-      sujeto: datos.sujeto_excluido.nombre,
-    });
+    logger.info('JSON FSE generado', { numeroControl, codigoGeneracion, total: resumen.totalPagar, correlativo });
 
-    return { json, codigoGeneracion, numeroControl, tipoDte: '14', version: 1 };
+    return { json, codigoGeneracion, numeroControl, tipoDte, version: TIPOS_DTE[tipoDte].version };
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -608,8 +287,8 @@ const generarFSE = async (datos) => {
 };
 
 /**
- * Genera el JSON de Invalidación/Anulación de un DTE
- * Basado en el esquema anulacion-schema-v2.json
+ * Genera el JSON de Invalidación/Anulación
+ * El establecimiento viene del DTE a anular
  */
 const generarInvalidacion = async (datos) => {
   if (!datos.codigo_generacion_a_anular) {
@@ -619,45 +298,64 @@ const generarInvalidacion = async (datos) => {
     throw { status: 400, mensaje: 'Se requiere el motivo de invalidación.' };
   }
 
-  const config = await configuracionService.obtenerConfiguracion();
+  const config           = await configuracionService.obtenerConfiguracion();
   const codigoGeneracion = generarCodigoGeneracion();
+  const { getFechaHoraEmision } = require('./generador.utils');
+  const { fecEmi: fecAnula, horEmi: horAnula } = getFechaHoraEmision();
+
+  // Obtener el establecimiento del DTE a anular
+  const { query } = require('../../config/database');
+  let establecimiento = null;
+  try {
+    const { rows } = await query(
+      `SELECT e.cod_estable_mh, e.cod_estable, e.cod_punto_venta_mh, e.cod_punto_venta,
+              e.tipo_establecimiento, e.telefono, e.correo
+       FROM dtes d
+       JOIN establecimientos e ON e.id = d.establecimiento_id
+       WHERE d.codigo_generacion = $1`,
+      [datos.codigo_generacion_a_anular.toUpperCase()]
+    );
+    if (rows.length > 0) establecimiento = rows[0];
+  } catch (_) {}
 
   const json = {
     identificacion: {
       version:          2,
       ambiente:         config.ambiente,
       codigoGeneracion: codigoGeneracion,
-      fecAnula:         new Date().toISOString().split('T')[0],
-      horAnula:         new Date().toTimeString().split(' ')[0],
+      fecAnula,
+      horAnula,
     },
     emisor: {
-      nit:    formatearNIT(config.nit),
-      nombre: config.nombre,
-      tipoEstablecimiento: config.tipo_establecimiento || '02',
-      telefono: config.telefono || '00000000',
-      correo:   config.email    || 'sin@correo.com',
-      codEstableMH:    config.codigo_establecimiento || '0001',
-      codEstable:      config.codigo_establecimiento || '0001',
-      codPuntoVentaMH: config.codigo_punto_venta    || '0001',
-      codPuntoVenta:   config.codigo_punto_venta    || '0001',
-      nomEstablecimiento: config.nombre_comercial || config.nombre,
+      nit:                 formatearNIT(config.nit),
+      nombre:              config.nombre,
+      tipoEstablecimiento: establecimiento?.tipo_establecimiento || config.tipo_establecimiento || '02',
+      telefono:            establecimiento?.telefono || config.telefono || '00000000',
+      correo:              establecimiento?.correo   || config.correo || config.email || '',
+      codEstableMH:        establecimiento?.cod_estable_mh      || config.codigo_establecimiento || '0001',
+      codEstable:          establecimiento?.cod_estable          || null,
+      codPuntoVentaMH:     establecimiento?.cod_punto_venta_mh   || config.codigo_punto_venta    || '0001',
+      codPuntoVenta:       establecimiento?.cod_punto_venta       || null,
+      nomEstablecimiento:  config.nombre_comercial || config.nombre,
     },
     documento: {
-      tipoDte:          datos.tipo_dte,
-      codigoGeneracion: datos.codigo_generacion_a_anular.toUpperCase(),
-      selloRecibido:    datos.sello_recepcion,
-      numeroControl:    datos.numero_control,
-      fecEmi:           datos.fecha_emision,
-      montoIva:         redondear2(datos.monto_iva || 0),
+      tipoDte:           datos.tipo_dte,
+      codigoGeneracion:  datos.codigo_generacion_a_anular.toUpperCase(),
+      selloRecibido:     datos.sello_recepcion,
+      numeroControl:     datos.numero_control,
+      fecEmi:            typeof datos.fecha_emision === 'object'
+        ? datos.fecha_emision.toISOString().split('T')[0]
+        : datos.fecha_emision,
+      montoIva:          redondear2(datos.monto_iva || 0),
       codigoGeneracionR: null,
-      tipoDocumento:    null,
-      numDocumento:     null,
-      nombre:           datos.receptor_nombre || null,
+      tipoDocumento:     null,
+      numDocumento:      null,
+      nombre:            datos.receptor_nombre || null,
     },
     motivo: {
-      tipoAnulacion:   datos.motivo_tipo,
-      motivoAnulacion: datos.motivo_descripcion,
-      nombreResponsable: datos.nombre_responsable || config.nombre,
+      tipoAnulacion:     datos.motivo_tipo,
+      motivoAnulacion:   datos.motivo_descripcion,
+      nombreResponsable: datos.nombre_responsable   || config.nombre,
       tipDocResponsable: datos.tipo_doc_responsable || '13',
       numDocResponsable: datos.num_doc_responsable  || '',
       nombreSolicita:    datos.nombre_solicita      || null,
@@ -666,10 +364,10 @@ const generarInvalidacion = async (datos) => {
     },
   };
 
-  logger.info('JSON de Invalidación generado', {
-    codigo_generacion: codigoGeneracion,
-    dte_a_anular:      datos.codigo_generacion_a_anular,
-    motivo:            datos.motivo_tipo,
+  logger.info('JSON Invalidación generado', {
+    codigoGeneracion,
+    dte_a_anular: datos.codigo_generacion_a_anular,
+    motivo:       datos.motivo_tipo,
   });
 
   return { json, codigoGeneracion, tipoDte: 'anulacion', version: 2 };
@@ -678,8 +376,6 @@ const generarInvalidacion = async (datos) => {
 module.exports = {
   generarFCF,
   generarCCF,
-  generarNotaCredito,
-  generarNotaDebito,
   generarFSE,
   generarInvalidacion,
   TIPOS_DTE,
