@@ -5,6 +5,11 @@
 -- =============================================
 
 -- ─────────────────────────────────────────────
+-- EXTENSIÓN TRIGRAM — debe ir ANTES de los índices que la usan
+-- ─────────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- ─────────────────────────────────────────────
 -- TABLA: clientes
 -- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS clientes (
@@ -76,12 +81,6 @@ CREATE INDEX IF NOT EXISTS idx_clientes_nombre_comercial
 -- Solo clientes activos
 CREATE INDEX IF NOT EXISTS idx_clientes_activo
   ON clientes(activo, tipo_cliente);
-
--- ─────────────────────────────────────────────
--- EXTENSIÓN TRIGRAM — necesaria para ILIKE eficiente
--- Si ya está instalada no falla
--- ─────────────────────────────────────────────
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ─────────────────────────────────────────────
 -- TRIGGER: actualizar actualizado_en automáticamente

@@ -30,6 +30,7 @@ const formatearParaRespuesta = (row) => ({
   direccion:              row.direccion,
   telefono:               row.telefono,
   email:                  row.email,
+  correo:                 row.correo || row.email || null,
   codigo_actividad:       row.codigo_actividad,
   codigo_establecimiento: row.codigo_establecimiento,
   codigo_punto_venta:     row.codigo_punto_venta,
@@ -62,7 +63,7 @@ const obtenerConfiguracion = async () => {
   const { rows } = await query(
     `SELECT
        id, nit, nrc, nombre, nombre_comercial,
-       direccion, telefono, email,
+       direccion, telefono, email, correo,
        codigo_actividad, codigo_establecimiento,
        codigo_punto_venta, tipo_establecimiento,
        ambiente,
@@ -138,7 +139,7 @@ const crearConfiguracion = async ({ datos }) => {
 
     const {
       nit, nrc, nombre, nombre_comercial,
-      direccion, telefono, email,
+      direccion, telefono, email, correo,
       codigo_actividad, codigo_establecimiento,
       codigo_punto_venta, tipo_establecimiento,
       usuario_hacienda, password_hacienda,
@@ -152,15 +153,15 @@ const crearConfiguracion = async ({ datos }) => {
     const { rows } = await client.query(
       `INSERT INTO configuracion (
          nit, nrc, nombre, nombre_comercial,
-         direccion, telefono, email,
+         direccion, telefono, email, correo,
          codigo_actividad, codigo_establecimiento,
          codigo_punto_venta, tipo_establecimiento,
          usuario_hacienda, password_hacienda,
          ambiente, departamento_cod, municipio_cod, desc_actividad
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING
          id, nit, nrc, nombre, nombre_comercial,
-         direccion, telefono, email,
+         direccion, telefono, email, correo,
          codigo_actividad, codigo_establecimiento,
          codigo_punto_venta, tipo_establecimiento,
          ambiente, departamento_cod, municipio_cod, desc_actividad,
@@ -175,6 +176,7 @@ const crearConfiguracion = async ({ datos }) => {
         direccion,
         telefono               || null,
         email                  || null,
+        correo                 || email || null,
         codigo_actividad,
         codigo_establecimiento || '0001',
         codigo_punto_venta     || '0001',
@@ -217,7 +219,7 @@ const actualizarConfiguracion = async ({ datos }) => {
 
   const camposPermitidos = [
     'nit', 'nrc', 'nombre', 'nombre_comercial',
-    'direccion', 'telefono', 'email',
+    'direccion', 'telefono', 'email', 'correo',
     'codigo_actividad', 'codigo_establecimiento',
     'codigo_punto_venta', 'tipo_establecimiento',
     'ambiente', 'departamento_cod', 'municipio_cod', 'desc_actividad',
@@ -266,7 +268,7 @@ const actualizarConfiguracion = async ({ datos }) => {
      WHERE id = (SELECT id FROM configuracion LIMIT 1)
      RETURNING
        id, nit, nrc, nombre, nombre_comercial,
-       direccion, telefono, email,
+       direccion, telefono, email, correo,
        codigo_actividad, codigo_establecimiento,
        codigo_punto_venta, tipo_establecimiento,
        ambiente, departamento_cod, municipio_cod, desc_actividad,
@@ -330,7 +332,6 @@ const obtenerTokenHacienda = async () => {
 };
 
 module.exports = {
-  obtenerConfiguracion, 
   obtenerConfiguracionPublica,
   obtenerCredencialesHacienda,
   obtenerTokenHacienda,

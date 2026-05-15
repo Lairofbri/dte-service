@@ -6,7 +6,8 @@
 const express    = require('express');
 const router     = express.Router();
 const controller = require('./clientes.controller');
-const { autenticarDual } = require('../../middlewares/auth.middleware');
+const { autenticarDual }   = require('../../middlewares/jwt.middleware');
+
 
 // Todas las rutas requieren autenticación
 router.use(autenticarDual);
