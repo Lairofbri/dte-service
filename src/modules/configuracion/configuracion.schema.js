@@ -49,8 +49,14 @@ const crearConfiguracionSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).optional().allow('', null).messages({
     'string.email': 'El email no tiene un formato válido.',
   }),
+  correo: Joi.string().email({ tlds: { allow: false } }).optional().allow('', null).messages({
+    'string.email': 'El correo no tiene un formato válido.',
+  }),
   codigo_actividad: Joi.string().min(4).max(10).required().messages({
     'any.required': 'El código de actividad económica es requerido.',
+  }),
+  desc_actividad: Joi.string().min(3).max(500).required().messages({
+    'any.required': 'La descripción de actividad económica es requerida.',
   }),
   codigo_establecimiento: Joi.string().length(4).optional().default('0001').messages({
     'string.length': 'El código de establecimiento debe tener 4 dígitos.',
@@ -59,6 +65,8 @@ const crearConfiguracionSchema = Joi.object({
     'string.length': 'El código de punto de venta debe tener 4 dígitos.',
   }),
   tipo_establecimiento: Joi.string().max(2).optional().default('02'),
+  departamento_cod:     Joi.string().length(2).optional().allow('', null),
+  municipio_cod:        Joi.string().length(2).pattern(/^[0-9]{2}$/).optional().allow('', null),
 
   // Credenciales de Hacienda
   // Se validan aquí pero se encriptan en el service antes de guardar
@@ -66,35 +74,15 @@ const crearConfiguracionSchema = Joi.object({
     'any.required': 'El usuario de Hacienda es requerido.',
     'string.min':   'El usuario debe tener al menos 5 caracteres.',
   }),
-  password_hacienda: Joi.string().min(13).max(25)
-  .pattern(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{13,25}$/)
-  .required()
-  .messages({
-    'any.required':        'La contraseña de Hacienda es requerida.',
-    'string.min':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
-    'string.max':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
-    'string.pattern.base': 'La contraseña de Hacienda debe contener letras, números y al menos un carácter especial.',
+  password_hacienda: Joi.string().min(13).max(25).required().messages({
+    'any.required': 'La contraseña de Hacienda es requerida.',
+    'string.min':   'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
+    'string.max':   'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
   }),
 
   // Ambiente: 00 = pruebas, 01 = producción
   ambiente: Joi.string().valid('00', '01').optional().default('00').messages({
     'any.only': 'El ambiente debe ser 00 (pruebas) o 01 (producción).',
-  }),
-  // Códigos de ubicación según catálogo de Hacienda
-// Requeridos para construir la dirección del emisor en el JSON DTE
-  departamento_cod: Joi.string().length(2).pattern(/^(0[1-9]|1[0-4])$/)
-  .optional().default('06').messages({
-    'string.pattern.base': 'El código de departamento debe ser del 01 al 14.',
-    'string.length':       'El código de departamento debe tener 2 dígitos.',
-  }),
-  municipio_cod: Joi.string().length(2).pattern(/^[0-9]{2}$/)
-  .optional().default('14').messages({
-    'string.pattern.base': 'El código de municipio debe ser numérico de 2 dígitos.',
-    'string.length':       'El código de municipio debe tener 2 dígitos.',
-  }),
-// Descripción de la actividad económica (requerida en el JSON DTE)
-  desc_actividad: Joi.string().min(5).max(150).optional().allow('', null).messages({
-  'string.min': 'La descripción de actividad debe tener al menos 5 caracteres.',
   }),
 });
 
@@ -111,36 +99,17 @@ const actualizarConfiguracionSchema = Joi.object({
   direccion:              Joi.string().min(5).max(255).optional(),
   telefono:               Joi.string().pattern(telefonoRegex).optional().allow('', null),
   email:                  Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
+  correo:                 Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
   codigo_actividad:       Joi.string().min(4).max(10).optional(),
+  desc_actividad:         Joi.string().min(3).max(500).optional().allow('', null),
   codigo_establecimiento: Joi.string().length(4).optional(),
   codigo_punto_venta:     Joi.string().length(4).optional(),
   tipo_establecimiento:   Joi.string().max(2).optional(),
+  departamento_cod:       Joi.string().length(2).optional().allow('', null),
+  municipio_cod:          Joi.string().length(2).optional().allow('', null),
   usuario_hacienda:       Joi.string().min(5).max(20).optional(),
-  password_hacienda: Joi.string().min(13).max(25)
-  .pattern(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{13,25}$/)
-  .optional()
-  .messages({
-    'string.min':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
-    'string.max':          'La contraseña de Hacienda debe tener entre 13 y 25 caracteres.',
-    'string.pattern.base': 'La contraseña de Hacienda debe contener letras, números y al menos un carácter especial.',
-  }),
+  password_hacienda:      Joi.string().min(13).max(25).optional(),
   ambiente:               Joi.string().valid('00', '01').optional(),
-  // Códigos de ubicación según catálogo de Hacienda
-// Requeridos para construir la dirección del emisor en el JSON DTE
-  // DESPUÉS — sin .default() en el schema de actualización
-departamento_cod: Joi.string().length(2).pattern(/^(0[1-9]|1[0-4])$/)
-  .optional().messages({
-    'string.pattern.base': 'El código de departamento debe ser del 01 al 14.',
-    'string.length':       'El código de departamento debe tener 2 dígitos.',
-  }),
-  municipio_cod: Joi.string().length(2).pattern(/^[0-9]{2}$/)
-  .optional().messages({
-    'string.pattern.base': 'El código de municipio debe ser numérico de 2 dígitos.',
-    'string.length':       'El código de municipio debe tener 2 dígitos.',
-  }),
-  desc_actividad: Joi.string().min(5).max(150).optional().allow('', null).messages({
-  'string.min': 'La descripción de actividad debe tener al menos 5 caracteres.',
-  }),
 }).min(1).messages({
   'object.min': 'Debe enviar al menos un campo para actualizar.',
 });
