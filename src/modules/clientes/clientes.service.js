@@ -1,8 +1,6 @@
 // src/modules/clientes/clientes.service.js
 // Lógica de negocio para gestión de clientes
-// H3 FIX: obtenerClientePorId filtra activo=true
-// H2 FIX: sin defaults silenciosos en tipo_documento
-// H5 FIX: actualizarCliente verifica integridad del jurídico post-merge
+// Principio S (SOLID): solo opera datos, no valida HTTP ni responde
 
 const { query } = require('../../config/database');
 const logger    = require('../../utils/logger');
@@ -34,6 +32,7 @@ const mapearCliente = (row) => ({
 
 // ─────────────────────────────────────────────
 // BUSCAR — búsqueda parcial por nombre, NIT, num_documento
+// Usado para autocompletar en DTEEmitir
 // ─────────────────────────────────────────────
 const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10 }) => {
   const offset = (pagina - 1) * limite;
@@ -49,6 +48,7 @@ const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10 }) => {
     const termino = q.trim();
     params.push(`%${termino}%`);
     const p = params.length;
+    // Buscar en nombre, nombre_comercial, nit, num_documento
     wheres.push(`(
       c.nombre           ILIKE $${p} OR
       c.nombre_comercial ILIKE $${p} OR
@@ -58,17 +58,20 @@ const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10 }) => {
     )`);
   }
 
-  const where = `WHERE ${wheres.join(' AND ')}`;
+  const where = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
+  // Total para paginación
   const { rows: totalRows } = await query(
     `SELECT COUNT(*) FROM clientes c ${where}`,
     params
   );
   const total = parseInt(totalRows[0].count, 10);
 
+  // Resultados con conteo de DTEs emitidos
   params.push(limite, offset);
   const { rows } = await query(
-    `SELECT c.*, COUNT(d.id) AS total_dtes
+    `SELECT c.*,
+            COUNT(d.id) AS total_dtes
      FROM clientes c
      LEFT JOIN dtes d ON d.cliente_id = c.id
      ${where}
@@ -79,24 +82,20 @@ const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10 }) => {
   );
 
   return {
-    clientes:   rows.map(mapearCliente),
+    clientes:  rows.map(mapearCliente),
     paginacion: { total, pagina, limite, paginas: Math.ceil(total / limite) },
   };
 };
 
 // ─────────────────────────────────────────────
 // OBTENER POR ID
-// H3 FIX: filtra activo = true — consistente con listar()
-// Un cliente soft-deleted no debe ser accesible por ninguna vía pública
 // ─────────────────────────────────────────────
-const obtenerClientePorId = async (id, { incluirInactivo = false } = {}) => {
-  const filtroActivo = incluirInactivo ? '' : 'AND c.activo = true';
-
+const obtenerClientePorId = async (id) => {
   const { rows } = await query(
     `SELECT c.*, COUNT(d.id) AS total_dtes
      FROM clientes c
      LEFT JOIN dtes d ON d.cliente_id = c.id
-     WHERE c.id = $1 ${filtroActivo}
+     WHERE c.id = $1
      GROUP BY c.id`,
     [id]
   );
@@ -110,8 +109,6 @@ const obtenerClientePorId = async (id, { incluirInactivo = false } = {}) => {
 
 // ─────────────────────────────────────────────
 // CREAR
-// H2 FIX: sin default silencioso en tipo_documento
-// El schema ya garantiza que tipo_documento existe si hay num_documento
 // ─────────────────────────────────────────────
 const crearCliente = async (datos) => {
   // Verificar duplicado por NIT si es jurídico
@@ -125,18 +122,17 @@ const crearCliente = async (datos) => {
     }
   }
 
-  // H2 FIX: verificar duplicado con tipo_documento real — sin default silencioso
-  // Solo verificar si ambos campos están presentes y son consistentes
-  if (datos.tipo_cliente === 'natural' && datos.num_documento && datos.tipo_documento) {
+  // Verificar duplicado por num_documento si es natural con documento
+  if (datos.tipo_cliente === 'natural' && datos.num_documento) {
     const { rows: exist } = await query(
       `SELECT id FROM clientes
        WHERE num_documento = $1 AND tipo_documento = $2 AND activo = true`,
-      [datos.num_documento, datos.tipo_documento]
+      [datos.num_documento, datos.tipo_documento || '13']
     );
     if (exist.length > 0) {
       throw {
         status: 409,
-        mensaje: `Ya existe un cliente activo con ese número de documento (${datos.tipo_documento}).`,
+        mensaje: `Ya existe un cliente activo con ese número de documento.`,
       };
     }
   }
@@ -154,7 +150,7 @@ const crearCliente = async (datos) => {
       datos.tipo_cliente,
       datos.nombre,
       datos.nombre_comercial  || null,
-      datos.tipo_documento    || null,  // H2 FIX: null real, no '13'
+      datos.tipo_documento    || null,
       datos.num_documento     || null,
       datos.nit               || null,
       datos.nrc               || null,
@@ -174,15 +170,13 @@ const crearCliente = async (datos) => {
 
 // ─────────────────────────────────────────────
 // ACTUALIZAR
-// H5 FIX: verifica integridad del jurídico después de aplicar los cambios
-// Se hace merge de datos actuales + nuevos antes de validar
 // ─────────────────────────────────────────────
 const actualizarCliente = async (id, datos) => {
-  // H3: usa incluirInactivo: false — no se puede editar un cliente eliminado
-  const clienteActual = await obtenerClientePorId(id);
+  // Verificar que existe
+  await obtenerClientePorId(id);
 
   // Verificar duplicado NIT si se está cambiando
-  if (datos.nit && datos.nit !== clienteActual.nit) {
+  if (datos.nit) {
     const { rows: exist } = await query(
       `SELECT id FROM clientes WHERE nit = $1 AND activo = true AND id != $2`,
       [datos.nit, id]
@@ -190,42 +184,6 @@ const actualizarCliente = async (id, datos) => {
     if (exist.length > 0) {
       throw { status: 409, mensaje: `Ya existe otro cliente activo con el NIT ${datos.nit}.` };
     }
-  }
-
-  // H5 FIX: construir el estado resultante y verificar integridad fiscal
-  // Merge: datos actuales + nuevos cambios
-  const resultante = { ...clienteActual, ...datos };
-
-  if (resultante.tipo_cliente === 'juridico') {
-    // NIT no puede quedar vacío en un jurídico
-    if (!resultante.nit) {
-      throw {
-        status: 400,
-        mensaje: 'No se puede dejar un cliente jurídico sin NIT. Hacienda lo exige en CCF/FSE.',
-      };
-    }
-    // NRC no puede quedar vacío en un jurídico
-    if (!resultante.nrc) {
-      throw {
-        status: 400,
-        mensaje: 'No se puede dejar un cliente jurídico sin NRC. Hacienda lo exige en CCF.',
-      };
-    }
-    // Actividad no puede quedar vacía
-    if (!resultante.cod_actividad) {
-      throw {
-        status: 400,
-        mensaje: 'No se puede dejar un cliente jurídico sin código de actividad económica.',
-      };
-    }
-  }
-
-  // H4 FIX: municipio requiere departamento en el estado resultante
-  if (resultante.municipio_cod && !resultante.departamento_cod) {
-    throw {
-      status: 400,
-      mensaje: 'Debe indicar el departamento cuando se especifica el municipio.',
-    };
   }
 
   // Construir SET dinámico solo con campos enviados
@@ -256,7 +214,7 @@ const actualizarCliente = async (id, datos) => {
     params
   );
 
-  logger.info('Cliente actualizado', { id, nombre: rows[0].nombre });
+  logger.info('Cliente actualizado', { id });
   return mapearCliente(rows[0]);
 };
 

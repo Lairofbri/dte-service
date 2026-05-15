@@ -1,225 +1,159 @@
-// src/modules/dtes/dtes.schema.js
-// Validación Joi — basado en JSONs reales aceptados por Hacienda
-// Soporta tanto el POS (API Key) como el frontend (JWT)
+// src/modules/clientes/clientes.schema.js
+// Validación Joi para clientes
+// Campos basados en requerimientos Hacienda por tipo de DTE
 
 const Joi = require('joi');
 
+const nitRegex    = /^\d{4}-\d{6}-\d{3}-\d{1}$/;
+const nrcRegex    = /^\d{1,7}(-\d)?$/;
+const correoRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // ─────────────────────────────────────────────
-// VALIDADORES REUTILIZABLES
+// Campos comunes a natural y jurídico
 // ─────────────────────────────────────────────
-const nitRegex = /^\d{4}-\d{6}-\d{3}-\d{1}$/;
-const nrcRegex = /^\d{1,7}(-\d)?$/;
-
-// Ítem con campos completos según Hacienda
-const itemSchema = Joi.object({
-  // Descripción — campo principal
-  descripcion:     Joi.string().min(1).max(1000).optional(),
-  nombre_producto: Joi.string().min(1).max(1000).optional(), // alias POS
-  // Al menos uno de los dos debe estar presente
-  precio_unitario: Joi.number().positive().required().messages({
-    'any.required': 'El precio unitario es requerido.',
-    'number.positive': 'El precio debe ser mayor a cero.',
+const camposComunes = {
+  nombre:           Joi.string().min(1).max(250).required().messages({
+    'any.required': 'El nombre es requerido.',
+    'string.min':   'El nombre no puede estar vacío.',
   }),
-  cantidad: Joi.number().positive().required().messages({
-    'any.required': 'La cantidad es requerida.',
-    'number.positive': 'La cantidad debe ser mayor a cero.',
-  }),
-  descuento:  Joi.number().min(0).optional().default(0),
-  codigo:     Joi.string().max(25).optional().allow('', null),
-  // CAT-011: 1=Bienes, 2=Servicios, 3=Ambos, 4=Otros
-  tipo_item:  Joi.number().integer().valid(1, 2, 3, 4).optional().default(2),
-  // CAT-014: 59=Unidad, 99=Otro, etc.
-  uni_medida: Joi.number().integer().min(1).max(99).optional().default(59),
-}).rename('nombre_producto', 'descripcion', {
-    alias: false,
-    override: false,
-    ignoreUndefined: true,
-  })
-  .or('descripcion', 'nombre_producto');
-
-// Pago individual
-const pagoSchema = Joi.object({
-  codigo:     Joi.string().valid('01','02','03','04','05','08','09','11','12','99').required(),
-  montoPago:  Joi.number().positive().required(),
-  referencia: Joi.string().max(50).optional().allow('', null),
-  plazo:      Joi.string().valid('01','02','03').optional().allow(null),
-  periodo:    Joi.number().integer().min(1).optional().allow(null),
-});
-
-// Receptor FCF — tipoDocumento + numDocumento
-const receptorFCFSchema = Joi.object({
-  nombre:          Joi.string().min(1).max(250).required().messages({
-    'any.required': 'El nombre del receptor es requerido.',
-  }),
-  tipo_documento:  Joi.string().valid('36', '13', '02', '03', '37').optional().allow(null),
-  num_documento:   Joi.string().min(3).max(20).optional().allow('', null),
-  // aliases frontend
-  numero_documento: Joi.string().min(3).max(20).optional().allow('', null),
-  correo:          Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-  email:           Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-  telefono:        Joi.string().min(8).max(20).optional().allow('', null),
-  direccion:       Joi.string().max(200).optional().allow('', null),
+  nombre_comercial: Joi.string().max(150).optional().allow('', null),
+  telefono:         Joi.string().min(8).max(20).optional().allow('', null),
+  correo:           Joi.string().pattern(correoRegex).max(150)
+    .optional().allow('', null)
+    .messages({ 'string.pattern.base': 'El correo no tiene un formato válido.' }),
+  // H4 FIX: departamento y municipio se validan juntos en custom
   departamento_cod: Joi.string().length(2).optional().allow(null),
-  municipio_cod:   Joi.string().length(2).optional().allow(null),
-});
-
-// Receptor CCF — nit/nrc con datos completos
-const receptorCCFSchema = Joi.object({
-  nit: Joi.string().pattern(nitRegex).required().messages({
-    'string.pattern.base': 'El NIT debe tener formato 0000-000000-000-0.',
-    'any.required':        'El NIT del receptor es requerido para CCF.',
-  }),
-  nrc: Joi.string().pattern(nrcRegex).optional().allow('', null),
-  nombre: Joi.string().min(1).max(250).required().messages({
-    'any.required': 'El nombre del receptor es requerido para CCF.',
-  }),
-  nombre_comercial:  Joi.string().max(150).optional().allow('', null),
-  cod_actividad:     Joi.string().min(5).max(6).optional().allow('', null),
-  // alias
-  codigo_actividad:  Joi.string().min(5).max(6).optional().allow('', null),
-  desc_actividad:    Joi.string().min(5).max(150).optional().allow('', null),
-  correo:            Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-  email:             Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-  telefono:          Joi.string().min(8).max(20).optional().allow('', null),
-  direccion:         Joi.string().max(200).optional().allow('', null),
-  departamento_cod:  Joi.string().length(2).optional().allow(null),
-  municipio_cod:     Joi.string().length(2).optional().allow(null),
-});
-
-// Documento relacionado para NC/ND
-const documentoRelacionadoSchema = Joi.object({
-  codigo_generacion: Joi.string().uuid().required(),
-  tipo_dte:          Joi.string().valid('01', '03', '04', '05', '06').required(),
-  fecha_emision:     Joi.string().isoDate().required(),
-});
-
-// ─────────────────────────────────────────────
-// CAMPOS COMUNES DE PAGO Y OPERACIÓN
-// Acepta tanto formato POS (metodo_pago) como formato frontend (condicion_operacion + pagos)
-// ─────────────────────────────────────────────
-const camposPagoComunes = {
-  // Formato POS
-  metodo_pago:          Joi.string().valid('efectivo', 'tarjeta', 'mixto').optional(),
-  monto_efectivo:       Joi.number().min(0).optional().default(0),
-  monto_tarjeta:        Joi.number().min(0).optional().default(0),
-  // Formato frontend
-  condicion_operacion:  Joi.number().integer().valid(1, 2, 3).optional().default(1),
-  pagos:                Joi.array().items(pagoSchema).min(1).max(10).optional().allow(null),
-  // Varios
-  orden_referencia:     Joi.string().max(100).optional().allow('', null),
-  password_pri:         Joi.string().min(1).required().messages({
-    'any.required': 'La contraseña del certificado (password_pri) es requerida.',
-  }),
-  es_contingencia:      Joi.boolean().optional().default(false),
-  tipo_contingencia:    Joi.number().integer().valid(1, 2, 3, 4, 5).optional().allow(null),
-  motivo_contingencia:  Joi.string().max(150).optional().allow('', null),
+  municipio_cod:    Joi.string().length(2).pattern(/^[0-9]{2}$/)
+    .optional().allow(null)
+    .messages({ 'string.pattern.base': 'El código de municipio debe ser numérico (00-99).' }),
+  direccion:        Joi.string().max(250).optional().allow('', null),
 };
 
 // ─────────────────────────────────────────────
-// SCHEMAS DE EMISIÓN
+// HELPER: validación cruzada compartida
+// Aplica tanto a crear como a actualizar (con contexto del registro existente)
 // ─────────────────────────────────────────────
+const validarIntegridadCliente = (value, helpers) => {
+  const tipo = value.tipo_cliente;
 
-const emitirFCFSchema = Joi.object({
-  items:    Joi.array().items(itemSchema).min(1).max(2000).required().messages({
-    'array.min':    'Debe haber al menos un ítem.',
-    'any.required': 'Los ítems son requeridos.',
-  }),
-  receptor: receptorFCFSchema.optional().allow(null),
-  ...camposPagoComunes,
-});
+  // H1 FIX: jurídico requiere NIT + NRC + actividad + dirección
+  // Hacienda rechaza CCF sin estos campos del receptor
+  if (tipo === 'juridico') {
+    if (!value.nit) {
+      return helpers.error('any.custom', {
+        message: 'El NIT es obligatorio para clientes jurídicos (CCF/FSE).',
+      });
+    }
+    if (!value.nrc) {
+      return helpers.error('any.custom', {
+        message: 'El NRC es obligatorio para clientes jurídicos. Hacienda lo exige en CCF.',
+      });
+    }
+    if (!value.cod_actividad) {
+      return helpers.error('any.custom', {
+        message: 'El código de actividad económica es obligatorio para clientes jurídicos.',
+      });
+    }
+    if (!value.desc_actividad) {
+      return helpers.error('any.custom', {
+        message: 'La descripción de actividad económica es obligatoria para clientes jurídicos.',
+      });
+    }
+  }
 
-const emitirCCFSchema = Joi.object({
-  items:    Joi.array().items(itemSchema).min(1).max(2000).required().messages({
-    'array.min':    'Debe haber al menos un ítem.',
-    'any.required': 'Los ítems son requeridos.',
-  }),
-  receptor: receptorCCFSchema.required().messages({
-    'any.required': 'Los datos del receptor son requeridos para CCF.',
-  }),
-  ...camposPagoComunes,
-});
+  // H2 FIX: tipo_documento requerido cuando hay num_documento — sin defaults silenciosos
+  if (value.tipo_cliente === 'natural' && value.num_documento && !value.tipo_documento) {
+    return helpers.error('any.custom', {
+      message: 'El tipo de documento es requerido cuando se proporciona un número de documento.',
+    });
+  }
 
-const emitirFSESchema = Joi.object({
-  items: Joi.array().items(itemSchema).min(1).max(2000).required(),
-  // Acepta tanto receptor como sujeto_excluido (alias POS)
-  receptor: Joi.object({
-    nit:             Joi.string().pattern(nitRegex).required().messages({
-      'any.required': 'El NIT del sujeto excluido es requerido.',
-    }),
-    nombre:          Joi.string().min(1).max(250).required(),
-    cod_actividad:   Joi.string().min(5).max(6).optional().allow('', null),
-    desc_actividad:  Joi.string().min(5).max(150).optional().allow('', null),
-    correo:          Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-    email:           Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-    telefono:        Joi.string().min(8).max(20).optional().allow('', null),
-    direccion:       Joi.string().max(200).optional().allow('', null),
-    departamento_cod: Joi.string().length(2).optional().allow(null),
-    municipio_cod:   Joi.string().length(2).optional().allow(null),
-  }).optional(),
-  sujeto_excluido: Joi.object({
-    nit:              Joi.string().pattern(nitRegex).required(),
-    nombre:           Joi.string().min(1).max(250).required(),
-    tipo_documento:   Joi.string().valid('13', '02', '03', '36', '37').optional().default('36'),
-    numero_documento: Joi.string().min(3).max(20).optional(),
-    cod_actividad:    Joi.string().min(5).max(6).optional().allow('', null),
-    codigo_actividad: Joi.string().min(5).max(6).optional().allow('', null),
-    desc_actividad:   Joi.string().min(5).max(150).optional().allow('', null),
-    email:            Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
-    telefono:         Joi.string().min(8).max(20).optional().allow('', null),
-    direccion:        Joi.string().max(200).optional().allow('', null),
-    departamento_cod: Joi.string().length(2).optional().allow(null),
-    municipio_cod:    Joi.string().length(2).optional().allow(null),
-  }).optional(),
-  observaciones: Joi.string().max(3000).optional().allow('', null),
-  ...camposPagoComunes,
-});
+  // H4 FIX: municipio requiere departamento — Hacienda los valida juntos en el JSON del receptor
+  if (value.municipio_cod && !value.departamento_cod) {
+    return helpers.error('any.custom', {
+      message: 'Debe indicar el departamento cuando se especifica el municipio.',
+    });
+  }
 
-const emitirNotaSchema = Joi.object({
-  items:                 Joi.array().items(itemSchema).min(1).max(2000).required(),
-  receptor:              receptorCCFSchema.required(),
-  documento_relacionado: documentoRelacionadoSchema.required().messages({
-    'any.required': 'El documento relacionado es requerido para Notas.',
-  }),
-  ...camposPagoComunes,
-});
+  return value;
+};
 
-const anularDTESchema = Joi.object({
-  codigo_generacion:    Joi.string().uuid().required().messages({
-    'any.required': 'El código de generación del DTE a anular es requerido.',
-    'string.uuid':  'El código de generación debe ser un UUID válido.',
+// ─────────────────────────────────────────────
+// Schema crear cliente
+// ─────────────────────────────────────────────
+const crearClienteSchema = Joi.object({
+  tipo_cliente: Joi.string().valid('natural', 'juridico').required().messages({
+    'any.required': 'El tipo de cliente es requerido (natural o juridico).',
+    'any.only':     'El tipo de cliente debe ser "natural" o "juridico".',
   }),
-  motivo_tipo: Joi.number().integer().valid(1, 2, 3).required().messages({
-    'any.required': 'El tipo de anulación es requerido (1=Error datos, 2=Rescindir, 3=Otro).',
-    'any.only':     'El tipo de anulación debe ser 1, 2 o 3.',
-  }),
-  motivo_descripcion: Joi.string().min(5).max(250).required().messages({
-    'any.required': 'La descripción del motivo de anulación es requerida.',
-  }),
-  nombre_responsable:   Joi.string().min(1).max(100).required(),
-  tipo_doc_responsable: Joi.string().valid('13', '02', '03', '36', '37').required(),
-  num_doc_responsable:  Joi.string().min(3).max(25).required(),
-  nombre_solicita:      Joi.string().min(1).max(100).optional().allow('', null),
-  tipo_doc_solicita:    Joi.string().valid('13', '02', '03', '36', '37').optional().allow(null),
-  num_doc_solicita:     Joi.string().min(3).max(25).optional().allow('', null),
-  password_pri:         Joi.string().min(1).required().messages({
-    'any.required': 'La contraseña del certificado (password_pri) es requerida.',
-  }),
-});
+  ...camposComunes,
 
-const filtrosDTESchema = Joi.object({
-  tipo_dte:    Joi.string().valid('01','03','04','05','06','07','08','09','11','14','15').optional(),
-  estado:      Joi.string().valid('generado','firmado','transmitido','aceptado','rechazado','contingencia','anulado').optional(),
-  fecha_desde: Joi.date().iso().optional(),
-  fecha_hasta: Joi.date().iso().optional(),
-  pagina:      Joi.number().integer().min(1).optional().default(1),
-  limite:      Joi.number().integer().min(1).max(100).optional().default(20),
+  // Persona natural (FCF) — tipo_documento requerido si hay num_documento (ver custom)
+  tipo_documento: Joi.string().valid('36', '13', '02', '03', '37')
+    .optional().allow(null),
+  num_documento:  Joi.string().min(3).max(30).optional().allow('', null),
+
+  // Jurídico (CCF / FSE) — NIT + NRC obligatorios para jurídico (ver custom)
+  nit:            Joi.string().pattern(nitRegex).optional().allow('', null)
+    .messages({ 'string.pattern.base': 'El NIT debe tener formato 0000-000000-000-0.' }),
+  nrc:            Joi.string().pattern(nrcRegex).optional().allow('', null)
+    .messages({ 'string.pattern.base': 'El NRC no tiene un formato válido.' }),
+  cod_actividad:  Joi.string().min(5).max(6).optional().allow('', null),
+  desc_actividad: Joi.string().min(3).max(500).optional().allow('', null),
+}).custom(validarIntegridadCliente).messages({ 'any.custom': '{{#message}}' });
+
+// ─────────────────────────────────────────────
+// Schema actualizar
+// H5 FIX: validación de integridad post-update según tipo_cliente
+// El tipo_cliente no se puede cambiar — viene en el contexto del registro
+// La validación cruzada se hace en el service con los datos combinados
+// ─────────────────────────────────────────────
+const actualizarClienteSchema = Joi.object({
+  nombre:           Joi.string().min(1).max(250).optional(),
+  nombre_comercial: Joi.string().max(150).optional().allow('', null),
+
+  // Natural
+  tipo_documento:   Joi.string().valid('36', '13', '02', '03', '37').optional().allow(null),
+  num_documento:    Joi.string().min(3).max(30).optional().allow('', null),
+
+  // Jurídico — NIT/NRC no pueden enviarse como null explícito (integridad en service)
+  nit:              Joi.string().pattern(nitRegex).optional()
+    .messages({ 'string.pattern.base': 'El NIT debe tener formato 0000-000000-000-0.' }),
+  nrc:              Joi.string().pattern(nrcRegex).optional()
+    .messages({ 'string.pattern.base': 'El NRC no tiene un formato válido.' }),
+  cod_actividad:    Joi.string().min(5).max(6).optional().allow('', null),
+  desc_actividad:   Joi.string().min(3).max(500).optional().allow('', null),
+
+  // Contacto
+  telefono:         Joi.string().min(8).max(20).optional().allow('', null),
+  correo:           Joi.string().pattern(correoRegex).max(150).optional().allow('', null),
+
+  // Dirección — H4: municipio requiere departamento (validado en service con datos combinados)
+  departamento_cod: Joi.string().length(2).optional().allow(null),
+  municipio_cod:    Joi.string().length(2).pattern(/^[0-9]{2}$/).optional().allow(null),
+  direccion:        Joi.string().max(250).optional().allow('', null),
+}).custom((value, helpers) => {
+  // H4 FIX en update: si se envía municipio sin departamento en el mismo payload
+  if (value.municipio_cod && !value.departamento_cod) {
+    return helpers.error('any.custom', {
+      message: 'Debe indicar el departamento cuando se especifica el municipio.',
+    });
+  }
+  return value;
+}).messages({ 'any.custom': '{{#message}}' });
+
+// ─────────────────────────────────────────────
+// Schema búsqueda / filtros
+// ─────────────────────────────────────────────
+const buscarClientesSchema = Joi.object({
+  q:            Joi.string().min(1).max(100).optional(),
+  tipo_cliente: Joi.string().valid('natural', 'juridico').optional(),
+  pagina:       Joi.number().integer().min(1).optional().default(1),
+  limite:       Joi.number().integer().min(1).max(50).optional().default(10),
 });
 
 module.exports = {
-  emitirFCFSchema,
-  emitirCCFSchema,
-  emitirFSESchema,
-  emitirNotaSchema,
-  anularDTESchema,
-  filtrosDTESchema,
+  crearClienteSchema,
+  actualizarClienteSchema,
+  buscarClientesSchema,
 };

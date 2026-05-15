@@ -21,6 +21,7 @@ const firmadorRoutes          = require('./modules/firmador/firmador.routes');
 const establecimientosRoutes  = require('./modules/establecimientos/establecimientos.routes');
 const usuariosRoutes          = require('./modules/usuarios/usuarios.routes');
 const authRoutes              = require('./modules/auth/auth.routes');
+const clientesRoutes          = require('./modules/clientes/clientes.routes');
 
 const app = express();
 
@@ -113,6 +114,7 @@ app.get('/health', (_req, res) => {
 // ─────────────────────────────────────────────
 // Auth — sin API Key, maneja su propia autenticación
 app.use('/api/auth',          authRoutes);
+app.use('/api/clientes',      clientesRoutes);
 
 app.use('/api/configuracion', configuracionRoutes);
 app.use('/api/dte',           limiteDTE, dteRoutes);
