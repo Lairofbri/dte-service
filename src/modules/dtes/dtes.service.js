@@ -40,7 +40,7 @@ const guardarDTE = async ({
   erroresHacienda, observaciones, ordenReferencia,
   totalGravado, totalIva, total,
   receptorNombre, receptorNit, receptorNrc,
-  establecimientoId, condicionOperacion,
+  establecimientoId, condicionOperacion, clienteId,
 }) => {
   const { rows } = await query(
     `INSERT INTO dtes (
@@ -50,8 +50,8 @@ const guardarDTE = async ({
        receptor_nombre, receptor_nit, receptor_nrc,
        total_gravado, total_iva, total,
        fecha_emision, hora_emision,
-       establecimiento_id, condicion_operacion
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       establecimiento_id, condicion_operacion, cliente_id
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
      RETURNING id, tipo_dte, codigo_generacion, numero_control,
                estado, sello_recepcion, fecha_emision, hora_emision,
                receptor_nombre, receptor_nit, receptor_nrc,
@@ -78,6 +78,7 @@ const guardarDTE = async ({
       jsonDte.identificacion.horEmi,
       establecimientoId  || null,
       condicionOperacion || 1,
+      clienteId          || null,
     ]
   );
   return rows[0];
@@ -170,6 +171,7 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
       receptorNrc:       jsonDte.receptor?.nrc    || null,
       establecimientoId: datos.establecimiento_id || null,
       condicionOperacion: resumen.condicionOperacion || 1,
+      clienteId:         datos.cliente_id         || null,
     });
 
     await registrarAuditoria('DTE_GENERADO', dteGuardado.id, {
