@@ -472,7 +472,7 @@ const generarInvalidacion = async (datos) => {
 
   const json = {
     identificacion: {
-      version:          3,
+      version:          2,
       ambiente:         config.ambiente,
       codigoGeneracion: codigoGeneracion,
       fecAnula,

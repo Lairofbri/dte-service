@@ -414,16 +414,16 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
   const subTotal       = redondear2(subTotalVentas - totalDescu);
 
   let ivaValor = 0;
-  if (tipoDte === '03') {
+  if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
     ivaValor = redondear2(totalGravada * 0.13);
   } else if (tipoDte === '01') {
     ivaValor = redondear2(totalGravada - (totalGravada / 1.13));
   }
 
-  // CCF: precio sin IVA → montoTotal = subTotal + IVA
+  // CCF, NC, ND: precio sin IVA → montoTotal = subTotal + IVA
   // FCF: precio con IVA → montoTotal = subTotal (IVA ya incluido)
   // FSE: sin IVA → montoTotal = subTotal
-  const montoTotalOperacion = tipoDte === '03'
+  const montoTotalOperacion = (tipoDte === '03' || tipoDte === '05' || tipoDte === '06')
     ? redondear2(subTotal + ivaValor)
     : redondear2(subTotal);
   const totalPagar = montoTotalOperacion;
