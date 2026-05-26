@@ -9,12 +9,12 @@ const { query }      = require('../../config/database');
 // CATÁLOGOS OFICIALES
 // ─────────────────────────────────────────────
 const TIPOS_DTE = {
-  '01': { nombre: 'Factura',                       version: 1 },
-  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 3 },
-  '05': { nombre: 'Nota de Crédito',               version: 3 },
-  '06': { nombre: 'Nota de Débito',                version: 3 },
-  '11': { nombre: 'Factura de Exportación',        version: 1 },
-  '14': { nombre: 'Factura de Sujeto Excluido',    version: 1 },
+  '01': { nombre: 'Factura',                       version: 2 },
+  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 4 },
+  '05': { nombre: 'Nota de Crédito',               version: 4 },
+  '06': { nombre: 'Nota de Débito',                version: 4 },
+  '11': { nombre: 'Factura de Exportación',        version: 3 },
+  '14': { nombre: 'Factura de Sujeto Excluido',    version: 2 },
 };
 
 const FORMAS_PAGO = {
@@ -27,6 +27,8 @@ const FORMAS_PAGO = {
   '09': 'Monedero electrónico',
   '11': 'Bitcoin',
   '12': 'Otras Criptomonedas',
+  '13': 'Cuentas por pagar del receptor',
+  '14': 'Giro bancario',
   '99': 'Otros',
 };
 
@@ -174,9 +176,10 @@ const obtenerSiguienteCorrelativo = async (
 const construirIdentificacion = ({
   tipoDte, numeroControl, codigoGeneracion, ambiente,
   esContingencia = false, tipoContingencia = null, motivoContingencia = null,
+  fusion = null,
 }) => {
   const { fecEmi, horEmi } = getFechaHoraEmision();
-  return {
+  const base = {
     version:          TIPOS_DTE[tipoDte].version,
     ambiente,
     tipoDte,
@@ -190,6 +193,12 @@ const construirIdentificacion = ({
     horEmi,
     tipoMoneda:       'USD',
   };
+
+  if (tipoDte === '05' || tipoDte === '06') {
+    base.fusion = fusion;
+  }
+
+  return base;
 };
 
 // ─────────────────────────────────────────────
@@ -197,24 +206,21 @@ const construirIdentificacion = ({
 // Códigos MH vienen del establecimiento del usuario
 // ─────────────────────────────────────────────
 const construirEmisor = (config, establecimiento) => ({
-  nit:                 formatearNIT(config.nit),
-  nrc:                 formatearNRC(config.nrc),
-  nombre:              config.nombre,
-  codActividad:        config.codigo_actividad,
-  descActividad:       config.desc_actividad   || '',
-  nombreComercial:     config.nombre_comercial  || null,
-  tipoEstablecimiento: establecimiento.tipo_establecimiento || '02',
+  nit:              formatearNIT(config.nit),
+  nrc:              formatearNRC(config.nrc),
+  nombre:           config.nombre,
+  codActividad:     config.codigo_actividad,
+  descActividad:    config.desc_actividad   || '',
+  nombreComercial:  config.nombre_comercial  || null,
   direccion: {
     departamento: establecimiento.departamento_cod || '06',
     municipio:    establecimiento.municipio_cod    || '20',
     complemento:  establecimiento.direccion        || config.direccion,
   },
-  telefono:        formatearTelefono(establecimiento.telefono || config.telefono) || '00000000',
-  correo:          establecimiento.correo || config.correo || config.email || '',
-  codEstableMH:    establecimiento.cod_estable_mh,
-  codEstable:      establecimiento.cod_estable      || null,
-  codPuntoVentaMH: establecimiento.cod_punto_venta_mh,
-  codPuntoVenta:   establecimiento.cod_punto_venta   || null,
+  telefono:      formatearTelefono(establecimiento.telefono || config.telefono) || '00000000',
+  correo:        establecimiento.correo || config.correo || config.email || '',
+  codEstable:    establecimiento.cod_estable      || null,
+  codPuntoVenta: establecimiento.cod_punto_venta   || null,
 });
 
 // ─────────────────────────────────────────────
@@ -279,14 +285,13 @@ const construirItem = (item, numItem, tipoDte) => {
   let   ventaGravada  = 0;
   let   ivaItem       = null;
 
-  if (tipoDte === '14') {
-    ventaGravada = redondear2(subtotalBruto);
-  } else if (tipoDte === '03') {
-    ventaGravada = redondear2(subtotalBruto);
-  } else {
+  if (tipoDte === '01') {
     // FCF: precio incluye IVA
     ventaGravada = redondear2(subtotalBruto / 1.13);
     ivaItem      = redondear2(subtotalBruto - ventaGravada);
+  } else {
+    // CCF, NC, ND: precio sin IVA
+    ventaGravada = redondear2(subtotalBruto);
   }
 
   const base = {
@@ -295,7 +300,7 @@ const construirItem = (item, numItem, tipoDte) => {
     numeroDocumento: null,
     codigo:          item.codigo     || null,
     codTributo:      null,
-    descripcion:     item.descripcion,
+    descripcion:     item.descripcion || item.nombre_producto || '',
     cantidad:        cantidad,
     uniMedida:       item.uni_medida || 59,
     precioUni:       precioUni,
@@ -303,23 +308,94 @@ const construirItem = (item, numItem, tipoDte) => {
     ventaNoSuj:      0.0,
     ventaExenta:     0.0,
     ventaGravada:    ventaGravada,
-    // tributos: null en FCF y FSE, ['20'] solo en CCF
-    tributos:        tipoDte === '03' ? ['20'] : null,
-    psv:             0.0,
+    tributos:        tipoDte === '03' || tipoDte === '05' || tipoDte === '06' ? ['20'] : null,
     noGravado:       0.0,
   };
 
+  if (tipoDte === '01' || tipoDte === '03') {
+    base.psv = 0.0;
+  }
+
   if (tipoDte === '01' && ivaItem !== null) {
     base.ivaItem = ivaItem;
+  }
+
+  if (tipoDte === '05' || tipoDte === '06') {
+    base.ivaPerci  = 0.0;
+    base.totalIva  = redondear2(ventaGravada * 0.13);
+    base.ivaRete   = 0.0;
   }
 
   return base;
 };
 
 // ─────────────────────────────────────────────
+// ITEM Y RESUMEN PARA FSE (DTE-14) — estructura simplificada sin IVA
+// ─────────────────────────────────────────────
+const construirItemFSE = (item, numItem) => {
+  const cantidad  = Number(item.cantidad)        || 0;
+  const precioUni = Number(item.precio_unitario) || 0;
+  const descuento = Number(item.descuento)       || 0;
+  return {
+    numItem,
+    tipoItem:     item.tipo_item  || 2,
+    cantidad,
+    codigo:       item.codigo     || null,
+    uniMedida:    item.uni_medida || 59,
+    descripcion:  item.descripcion || item.nombre_producto || '',
+    precioUni,
+    montoDescu:   descuento,
+    compra:       redondear2((cantidad * precioUni) - descuento),
+  };
+};
+
+const construirResumenFSE = (items, condicionOperacion = 1, pagos = null, observaciones = null) => {
+  let totalCompra = 0;
+  let totalDescu  = 0;
+  for (const item of items) {
+    totalCompra += item.compra   || 0;
+    totalDescu  += item.montoDescu || 0;
+  }
+  totalCompra  = redondear2(totalCompra);
+  totalDescu   = redondear2(totalDescu);
+  const subTotal  = totalCompra;
+  const totalPagar = subTotal;
+
+  const pagosFinales = pagos || [
+    { codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null },
+  ];
+
+  return {
+    totalCompra,
+    descu:             totalDescu,
+    totalDescu,
+    subTotal,
+    reteRenta:         0.0,
+    totalPagar,
+    totalLetras:       numeroALetras(totalPagar),
+    condicionOperacion,
+    pagos:             pagosFinales,
+    observaciones,
+  };
+};
+
+// ─────────────────────────────────────────────
+// DOCUMENTO RELACIONADO — para NC/ND (matriz de documentos originales)
+// ─────────────────────────────────────────────
+const construirDocumentoRelacionado = (docs) => {
+  if (!docs || docs.length === 0) return null;
+  return docs.map((d) => ({
+    tipoDocumento:   d.tipo_dte,
+    tipoGeneracion:  d.tipo_generacion || 1,
+    numeroDocumento: d.codigo_generacion,
+    fechaEmision:    d.fecha_emision,
+  }));
+};
+
+// ─────────────────────────────────────────────
 // SECCIÓN: RESUMEN
 // ─────────────────────────────────────────────
-const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null) => {
+const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, observaciones = null) => {
   let totalNoSuj   = 0;
   let totalExenta  = 0;
   let totalGravada = 0;
@@ -372,8 +448,8 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null) 
     totalDescu,
     tributos,
     subTotal,
-    ivaPerci1:          0.0,
-    ivaRete1:           0.0,
+    ivaPerci:           0.0,
+    ivaRete:            0.0,
     reteRenta:          0.0,
     montoTotalOperacion,
     totalNoGravado:     0.0,
@@ -382,11 +458,19 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null) 
     saldoFavor:         0.0,
     condicionOperacion,
     pagos:              pagosFinales,
-    numPagoElectronico: null,
+    observaciones,
   };
 
-  if (tipoDte === '01') {
+  if (tipoDte === '01' || tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
     resumen.totalIva = ivaValor;
+  }
+
+  if (tipoDte === '01' || tipoDte === '03' || tipoDte === '06') {
+    resumen.numPagoElectronico = null;
+  }
+
+  if (tipoDte === '05' || tipoDte === '06') {
+    resumen.codigoRetencionMH = null;
   }
 
   return resumen;
@@ -423,6 +507,9 @@ module.exports = {
   construirReceptorCCF,
   construirReceptorFSE,
   construirItem,
+  construirItemFSE,
   construirResumen,
+  construirResumenFSE,
+  construirDocumentoRelacionado,
   construirExtension,
 };

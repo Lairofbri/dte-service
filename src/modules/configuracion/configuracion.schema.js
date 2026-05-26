@@ -64,7 +64,9 @@ const crearConfiguracionSchema = Joi.object({
   codigo_punto_venta: Joi.string().length(4).optional().default('0001').messages({
     'string.length': 'El código de punto de venta debe tener 4 dígitos.',
   }),
-  tipo_establecimiento: Joi.string().max(2).optional().default('02'),
+  tipo_establecimiento: Joi.string().valid('01', '02', '04', '07').optional().default('02').messages({
+    'any.only': 'El tipo de establecimiento debe ser 01 (Sucursal), 02 (Casa Matriz), 04 (Bodega) o 07 (Patio).',
+  }),
   departamento_cod:     Joi.string().length(2).optional().allow('', null),
   municipio_cod:        Joi.string().length(2).pattern(/^[0-9]{2}$/).optional().allow('', null),
 
@@ -104,7 +106,9 @@ const actualizarConfiguracionSchema = Joi.object({
   desc_actividad:         Joi.string().min(3).max(500).optional().allow('', null),
   codigo_establecimiento: Joi.string().length(4).optional(),
   codigo_punto_venta:     Joi.string().length(4).optional(),
-  tipo_establecimiento:   Joi.string().max(2).optional(),
+  tipo_establecimiento:   Joi.string().valid('01', '02', '04', '07').optional().messages({
+    'any.only': 'El tipo de establecimiento debe ser 01 (Sucursal), 02 (Casa Matriz), 04 (Bodega) o 07 (Patio).',
+  }),
   departamento_cod:       Joi.string().length(2).optional().allow('', null),
   municipio_cod:          Joi.string().length(2).optional().allow('', null),
   usuario_hacienda:       Joi.string().min(5).max(20).optional(),
