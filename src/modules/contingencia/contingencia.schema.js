@@ -9,10 +9,10 @@ const Joi = require('joi');
 // CATÁLOGO DE TIPOS DE CONTINGENCIA
 // Según esquema oficial — enum [1, 2, 3, 4, 5]
 // ─────────────────────────────────────────────
-// 1 → No disponibilidad del sistema del MH
-// 2 → No disponibilidad de internet del emisor
-// 3 → Falla en el equipo del emisor
-// 4 → Desastre natural
+// 1 → No disponibilidad de sistema del MH
+// 2 → No disponibilidad de sistema del emisor
+// 3 → Falla en el suministro de servicio de Internet del Emisor
+// 4 → Falla en el suministro de servicio de energía eléctrica del emisor
 // 5 → Otro (especificar en motivo_contingencia)
 
 /**
