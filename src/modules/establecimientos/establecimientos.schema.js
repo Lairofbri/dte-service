@@ -8,10 +8,11 @@
 
 const Joi = require('joi');
 
-// Código de establecimiento: 4 caracteres alfanuméricos
+// Código de establecimiento: exactamente 4 caracteres alfanuméricos mayúsculas
 // Según formato del número de control: DTE-01-{XXXXXXXX}-...
-// Hacienda usa 4 dígitos numéricos típicamente
-const codEstableRegex = /^[A-Z0-9]{1,4}$/;
+// Asignado por Hacienda durante el acreditamiento — copiar exactamente del documento MH
+// Formato típico: letra + 3 dígitos (M001, S010, P001, B100)
+const codEstableRegex = /^[A-Z0-9]{4}$/;
 
 /**
  * Schema para crear un establecimiento

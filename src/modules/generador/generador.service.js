@@ -19,7 +19,10 @@ const {
   construirReceptorCCF,
   construirReceptorFSE,
   construirItem,
+  construirItemFSE,
   construirResumen,
+  construirResumenFSE,
+  construirDocumentoRelacionado,
   construirExtension,
 } = require('./generador.utils');
 
@@ -248,11 +251,13 @@ const generarFSE = async (datos) => {
     const tipoDte          = '14';
 
     const cuerpoDocumento = (datos.items || []).map((item, idx) =>
-      construirItem(item, idx + 1, tipoDte)
+      construirItemFSE(item, idx + 1)
     );
 
     const condicion = datos.condicion_operacion || 1;
-    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null);
+    const resumen   = construirResumenFSE(
+      cuerpoDocumento, condicion, datos.pagos || null, datos.observaciones || null
+    );
 
     if (!datos.pagos) {
       resumen.pagos = construirPagos(
@@ -270,11 +275,158 @@ const generarFSE = async (datos) => {
       cuerpoDocumento,
       resumen,
       extension: construirExtension(datos.extension || null),
+      observaciones:  datos.observaciones || null,
     };
 
     await client.query('COMMIT');
 
     logger.info('JSON FSE generado', { numeroControl, codigoGeneracion, total: resumen.totalPagar, correlativo });
+
+    return { json, codigoGeneracion, numeroControl, tipoDte, version: TIPOS_DTE[tipoDte].version };
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Nota de Crédito (NC - DTE-05)
+ * Corrige a la baja un DTE existente (reduce montos)
+ * Usa CCF-style receptor, con documento relacionado y ivaPerci/totalIva/ivaRete en items
+ */
+const generarNotaCredito = async (datos) => {
+  if (!datos.documento_relacionado?.codigo_generacion) {
+    throw { status: 400, mensaje: 'La Nota de Crédito requiere el código de generación del DTE original.' };
+  }
+
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const client = await getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
+      client, '05', config.ambiente,
+      establecimiento.id,
+      establecimiento.cod_estable_mh,
+      establecimiento.cod_punto_venta_mh
+    );
+
+    const codigoGeneracion = generarCodigoGeneracion();
+    const tipoDte          = '05';
+
+    const cuerpoDocumento = (datos.items || []).map((item, idx) =>
+      construirItem(item, idx + 1, tipoDte)
+    );
+
+    const condicion = datos.condicion_operacion || 1;
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null);
+
+    if (!datos.pagos) {
+      resumen.pagos = construirPagos(
+        datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, resumen.totalPagar
+      );
+    }
+
+    const docsRel = construirDocumentoRelacionado([datos.documento_relacionado]);
+
+    const json = {
+      identificacion: construirIdentificacion({
+        tipoDte, numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        esContingencia:    datos.es_contingencia    || false,
+        tipoContingencia:  datos.tipo_contingencia  || null,
+        motivoContingencia: datos.motivo_contingencia || null,
+        fusion:            datos.fusion             || null,
+      }),
+      ...CAMPOS_RAIZ_NULL,
+      documentoRelacionado: docsRel,
+      emisor:          construirEmisor(config, establecimiento),
+      receptor:        construirReceptorCCF(datos.receptor),
+      ventaTercero:    null,
+      cuerpoDocumento,
+      resumen,
+      apendice:        null,
+    };
+
+    await client.query('COMMIT');
+
+    logger.info('JSON Nota de Crédito generado', { numeroControl, codigoGeneracion, total: resumen.totalPagar, correlativo });
+
+    return { json, codigoGeneracion, numeroControl, tipoDte, version: TIPOS_DTE[tipoDte].version };
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Nota de Débito (ND - DTE-06)
+ * Corrige al alza un DTE existente (incrementa montos)
+ * Usa CCF-style receptor, con documento relacionado y ivaPerci/totalIva/ivaRete en items
+ */
+const generarNotaDebito = async (datos) => {
+  if (!datos.documento_relacionado?.codigo_generacion) {
+    throw { status: 400, mensaje: 'La Nota de Débito requiere el código de generación del DTE original.' };
+  }
+
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const client = await getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
+      client, '06', config.ambiente,
+      establecimiento.id,
+      establecimiento.cod_estable_mh,
+      establecimiento.cod_punto_venta_mh
+    );
+
+    const codigoGeneracion = generarCodigoGeneracion();
+    const tipoDte          = '06';
+
+    const cuerpoDocumento = (datos.items || []).map((item, idx) =>
+      construirItem(item, idx + 1, tipoDte)
+    );
+
+    const condicion = datos.condicion_operacion || 1;
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null);
+
+    if (!datos.pagos) {
+      resumen.pagos = construirPagos(
+        datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, resumen.totalPagar
+      );
+    }
+
+    const docsRel = construirDocumentoRelacionado([datos.documento_relacionado]);
+
+    const json = {
+      identificacion: construirIdentificacion({
+        tipoDte, numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        esContingencia:    datos.es_contingencia    || false,
+        tipoContingencia:  datos.tipo_contingencia  || null,
+        motivoContingencia: datos.motivo_contingencia || null,
+        fusion:            datos.fusion             || null,
+      }),
+      ...CAMPOS_RAIZ_NULL,
+      documentoRelacionado: docsRel,
+      emisor:          construirEmisor(config, establecimiento),
+      receptor:        construirReceptorCCF(datos.receptor),
+      ventaTercero:    null,
+      cuerpoDocumento,
+      resumen,
+      apendice:        null,
+    };
+
+    await client.query('COMMIT');
+
+    logger.info('JSON Nota de Débito generado', { numeroControl, codigoGeneracion, total: resumen.totalPagar, correlativo });
 
     return { json, codigoGeneracion, numeroControl, tipoDte, version: TIPOS_DTE[tipoDte].version };
 
@@ -325,6 +477,7 @@ const generarInvalidacion = async (datos) => {
       codigoGeneracion: codigoGeneracion,
       fecAnula,
       horAnula,
+      fusion:           null,
     },
     emisor: {
       nit:                 formatearNIT(config.nit),
@@ -370,13 +523,15 @@ const generarInvalidacion = async (datos) => {
     motivo:       datos.motivo_tipo,
   });
 
-  return { json, codigoGeneracion, tipoDte: 'anulacion', version: 2 };
+  return { json, codigoGeneracion, tipoDte: 'anulacion', version: 3 };
 };
 
 module.exports = {
   generarFCF,
   generarCCF,
   generarFSE,
+  generarNotaCredito,
+  generarNotaDebito,
   generarInvalidacion,
   TIPOS_DTE,
 };
