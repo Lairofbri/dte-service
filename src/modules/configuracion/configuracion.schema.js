@@ -58,13 +58,13 @@ const crearConfiguracionSchema = Joi.object({
   desc_actividad: Joi.string().min(3).max(500).required().messages({
     'any.required': 'La descripción de actividad económica es requerida.',
   }),
-  codigo_establecimiento: Joi.string().length(4).optional().default('0001').messages({
+  codigo_establecimiento: Joi.string().length(4).optional().messages({
     'string.length': 'El código de establecimiento debe tener 4 dígitos.',
   }),
-  codigo_punto_venta: Joi.string().length(4).optional().default('0001').messages({
+  codigo_punto_venta: Joi.string().length(4).optional().messages({
     'string.length': 'El código de punto de venta debe tener 4 dígitos.',
   }),
-  tipo_establecimiento: Joi.string().valid('01', '02', '04', '07').optional().default('02').messages({
+  tipo_establecimiento: Joi.string().valid('01', '02', '04', '07').optional().messages({
     'any.only': 'El tipo de establecimiento debe ser 01 (Sucursal), 02 (Casa Matriz), 04 (Bodega) o 07 (Patio).',
   }),
   departamento_cod:     Joi.string().length(2).optional().allow('', null),
@@ -83,8 +83,10 @@ const crearConfiguracionSchema = Joi.object({
   }),
 
   // Ambiente: 00 = pruebas, 01 = producción
-  ambiente: Joi.string().valid('00', '01').optional().default('00').messages({
-    'any.only': 'El ambiente debe ser 00 (pruebas) o 01 (producción).',
+  ambiente: Joi.string().valid('00', '01').required().messages({
+    'any.only':       'El ambiente debe ser 00 (pruebas) o 01 (producción).',
+    'any.required':   'El ambiente es requerido (00 = pruebas, 01 = producción).',
+  }),
   }),
 });
 
