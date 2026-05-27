@@ -74,7 +74,7 @@ const construirJsonContingencia = ({ config, dtes, datos }) => {
       codEstableMH:         config.codigo_establecimiento || null,
       codPuntoVenta:        config.codigo_punto_venta    || null,
       telefono:             config.telefono || '00000000',
-      correo:               config.email    || 'sin@correo.com',
+      correo:               config.email    || null,
     },
     // detalleDTE: mínimo 1, máximo 1000 según esquema
     // Solo incluimos los campos requeridos: noItem, codigoGeneracion, tipoDoc

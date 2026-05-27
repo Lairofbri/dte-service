@@ -150,6 +150,26 @@ const crearConfiguracion = async ({ datos }) => {
     const usuarioEncriptado  = encriptar(usuario_hacienda);
     const passwordEncriptado = encriptar(password_hacienda);
 
+    // Advertir si se están usando valores por defecto para códigos MH
+    if (!codigo_establecimiento) {
+      logger.warn('crearConfiguracion: usando valor por defecto "0001" para codigo_establecimiento — debe actualizarse con el código real de Hacienda');
+    }
+    if (!codigo_punto_venta) {
+      logger.warn('crearConfiguracion: usando valor por defecto "0001" para codigo_punto_venta — debe actualizarse con el código real de Hacienda');
+    }
+    if (!tipo_establecimiento) {
+      logger.warn('crearConfiguracion: usando valor por defecto "02" (Casa Matriz) para tipo_establecimiento');
+    }
+    if (!ambiente) {
+      logger.warn('crearConfiguracion: usando ambiente "00" (pruebas) por defecto — cambiar a "01" para producción');
+    }
+    if (!departamento_cod) {
+      logger.warn('crearConfiguracion: usando departamento_cod "06" por defecto');
+    }
+    if (!municipio_cod) {
+      logger.warn('crearConfiguracion: usando municipio_cod "14" por defecto');
+    }
+
     const { rows } = await client.query(
       `INSERT INTO configuracion (
          nit, nrc, nombre, nombre_comercial,

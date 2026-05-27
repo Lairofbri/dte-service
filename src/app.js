@@ -34,6 +34,20 @@ app.use(helmet({
 }));
 
 // ─────────────────────────────────────────────
+// HEALTH CHECK — antes de CORS, rate limit y auth
+// Railway lo usa para verificar que el servicio está vivo
+// Debe ir ANTES de CORS porque Railway no envía header Origin
+// ─────────────────────────────────────────────
+app.get('/health', (_req, res) => {
+  res.status(200).json({
+    ok:        true,
+    servicio:  'dte-service',
+    estado:    'activo',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ─────────────────────────────────────────────
 // CORS — solo el POS puede consumir este servicio
 // ─────────────────────────────────────────────
 app.use(cors({
@@ -93,19 +107,6 @@ app.use((req, _res, next) => {
     // NUNCA loguear headers que puedan contener la API Key
   });
   next();
-});
-
-// ─────────────────────────────────────────────
-// HEALTH CHECK — sin autenticación
-// Railway lo usa para verificar que el servicio está vivo
-// ─────────────────────────────────────────────
-app.get('/health', (_req, res) => {
-  res.status(200).json({
-    ok:        true,
-    servicio:  'dte-service',
-    estado:    'activo',
-    timestamp: new Date().toISOString(),
-  });
 });
 
 // ─────────────────────────────────────────────
