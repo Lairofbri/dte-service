@@ -87,7 +87,6 @@ const crearConfiguracionSchema = Joi.object({
     'any.only':       'El ambiente debe ser 00 (pruebas) o 01 (producción).',
     'any.required':   'El ambiente es requerido (00 = pruebas, 01 = producción).',
   }),
-  }),
 });
 
 // ─────────────────────────────────────────────
