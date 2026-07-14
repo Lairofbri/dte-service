@@ -23,8 +23,11 @@ const FORMAS_PAGO = {
   '03': 'Tarjeta Crédito',
   '04': 'Cheque',
   '05': 'Transferencia-Depósito Bancario',
+  '06': 'Tarjeta Empresarial',
+  '07': 'Bono',
   '08': 'Dinero electrónico',
   '09': 'Monedero electrónico',
+  '10': 'Vales',
   '11': 'Bitcoin',
   '12': 'Otras Criptomonedas',
   '13': 'Cuentas por pagar del receptor',
@@ -79,6 +82,7 @@ const getFechaHoraEmision = () => {
 };
 
 const redondear2 = (num) => Math.round(num * 100) / 100;
+const redondear8 = (num) => Math.round(num * 1e8) / 1e8;
 
 const numeroALetras = (monto) => {
   if (isNaN(monto) || monto < 0) return 'CERO 00/100 DÓLARES';
@@ -137,6 +141,13 @@ const numeroALetras = (monto) => {
 const obtenerSiguienteCorrelativo = async (
   client, tipoDte, ambiente, establecimientoId, codEstableMH, codPuntoVentaMH
 ) => {
+  if (!/^[A-Z0-9]{4}$/.test(codEstableMH)) {
+    throw { status: 400, mensaje: 'Formato inválido de código de establecimiento MH.' };
+  }
+  if (!/^[A-Z0-9]{4}$/.test(codPuntoVentaMH)) {
+    throw { status: 400, mensaje: 'Formato inválido de código de punto de venta MH.' };
+  }
+
   // Intentar obtener o crear el correlativo para este establecimiento
   const { rows: lockRows } = await client.query(
     `SELECT id FROM correlativos
@@ -286,12 +297,12 @@ const construirItem = (item, numItem, tipoDte) => {
   let   ivaItem       = null;
 
   if (tipoDte === '01') {
-    // FCF: precio incluye IVA
-    ventaGravada = redondear2(subtotalBruto / 1.13);
-    ivaItem      = redondear2(subtotalBruto - ventaGravada);
+    // FCF: precio incluye IVA — 8 decimales a nivel ítem
+    ventaGravada = redondear8(subtotalBruto / 1.13);
+    ivaItem      = redondear8(subtotalBruto - ventaGravada);
   } else {
-    // CCF, NC, ND: precio sin IVA
-    ventaGravada = redondear2(subtotalBruto);
+    // CCF, NC, ND: precio sin IVA — 8 decimales a nivel ítem
+    ventaGravada = redondear8(subtotalBruto);
   }
 
   const base = {
@@ -322,7 +333,7 @@ const construirItem = (item, numItem, tipoDte) => {
 
   if (tipoDte === '05' || tipoDte === '06') {
     base.ivaPerci  = 0.0;
-    base.totalIva  = redondear2(ventaGravada * 0.13);
+    base.totalIva  = redondear8(ventaGravada * 0.13);
     base.ivaRete   = 0.0;
   }
 
@@ -345,7 +356,7 @@ const construirItemFSE = (item, numItem) => {
     descripcion:  item.descripcion || item.nombre_producto || '',
     precioUni,
     montoDescu:   descuento,
-    compra:       redondear2((cantidad * precioUni) - descuento),
+    compra:       redondear8((cantidad * precioUni) - descuento),
   };
 };
 
@@ -499,6 +510,7 @@ module.exports = {
   formatearTelefono,
   getFechaHoraEmision,
   redondear2,
+  redondear8,
   numeroALetras,
   obtenerSiguienteCorrelativo,
   construirIdentificacion,
