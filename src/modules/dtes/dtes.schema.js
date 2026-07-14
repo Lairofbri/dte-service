@@ -34,7 +34,7 @@ const itemSchema = Joi.object({
 
 // Pago individual
 const pagoSchema = Joi.object({
-  codigo:     Joi.string().valid('01','02','03','04','05','08','09','11','12','13','14','99').required(),
+  codigo:     Joi.string().valid('01','02','03','04','05','06','07','08','09','10','11','12','13','14','99').required(),
   montoPago:  Joi.number().positive().required(),
   referencia: Joi.string().max(50).optional().allow('', null),
   plazo:      Joi.string().valid('01','02','03').optional().allow(null),

@@ -268,6 +268,9 @@ const generarFSE = async (datos) => {
     const json = {
       identificacion: construirIdentificacion({
         tipoDte, numeroControl, codigoGeneracion, ambiente: config.ambiente,
+        esContingencia:    datos.es_contingencia    || false,
+        tipoContingencia:  datos.tipo_contingencia  || null,
+        motivoContingencia: datos.motivo_contingencia || null,
       }),
       ...CAMPOS_RAIZ_NULL,
       emisor:          construirEmisor(config, establecimiento),
