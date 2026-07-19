@@ -30,10 +30,26 @@ const {
 // HELPER: obtener config + establecimiento del usuario
 // El establecimiento del usuario determina los códigos MH del emisor
 // ─────────────────────────────────────────────
-const obtenerConfigYEstablecimiento = async (establecimientoId) => {
+const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
   const config = await configuracionService.obtenerConfiguracion();
+
+  // Si no hay establecimientoId (API Key), buscar por códigos MH del body
   if (!establecimientoId) {
-    throw { status: 400, mensaje: 'Se requiere el establecimiento del usuario para emitir DTEs.' };
+    if (datos.cod_estable_mh && datos.cod_punto_venta_mh) {
+      const { query } = require('../../config/database');
+      const { rows: estRows } = await query(
+        `SELECT id FROM establecimientos
+         WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2 AND activo = true`,
+        [datos.cod_estable_mh, datos.cod_punto_venta_mh]
+      );
+      if (estRows.length > 0) {
+        establecimientoId = estRows[0].id;
+      }
+    }
+
+    if (!establecimientoId) {
+      throw { status: 400, mensaje: 'Se requiere el establecimiento del usuario para emitir DTEs.' };
+    }
   }
 
   const { query } = require('../../config/database');
@@ -80,7 +96,7 @@ const construirPagos = (metodoPago, montoEfectivo, montoTarjeta, totalPagar) => 
  * Resumen: totalIva incluido
  */
 const generarFCF = async (datos) => {
-  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id, datos);
   const client = await getClient();
 
   try {
@@ -166,7 +182,7 @@ const generarCCF = async (datos) => {
     throw { status: 400, mensaje: 'El CCF requiere el NIT del receptor.' };
   }
 
-  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id, datos);
   const client = await getClient();
 
   try {
@@ -234,7 +250,7 @@ const generarFSE = async (datos) => {
     throw { status: 400, mensaje: 'La FSE requiere el NIT del receptor.' };
   }
 
-  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id, datos);
   const client = await getClient();
 
   try {
@@ -305,7 +321,7 @@ const generarNotaCredito = async (datos) => {
     throw { status: 400, mensaje: 'La Nota de Crédito requiere el código de generación del DTE original.' };
   }
 
-  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id, datos);
   const client = await getClient();
 
   try {
@@ -378,7 +394,7 @@ const generarNotaDebito = async (datos) => {
     throw { status: 400, mensaje: 'La Nota de Débito requiere el código de generación del DTE original.' };
   }
 
-  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id);
+  const { config, establecimiento } = await obtenerConfigYEstablecimiento(datos.establecimiento_id, datos);
   const client = await getClient();
 
   try {

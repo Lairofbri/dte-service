@@ -1,6 +1,6 @@
 -- =============================================
 -- Migración 001: Estructura inicial del DTE Service
--- Una instancia = un cliente = una BD
+-- Multi-tenant: una BD compartida con tenant_id
 -- =============================================
 
 -- Extensión UUID
@@ -20,7 +20,7 @@ $$ LANGUAGE plpgsql;
 -- ─────────────────────────────────────────────
 -- TABLA: configuracion
 -- Datos del emisor y credenciales de Hacienda
--- Solo existe UNA fila en esta tabla
+-- Una fila por tenant (multi-tenant)
 -- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS configuracion (
   id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

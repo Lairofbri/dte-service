@@ -43,7 +43,9 @@ const manejarError = (res, err) => {
  */
 const obtenerConfiguracion = async (req, res) => {
   try {
-    const config = await service.obtenerConfiguracionPublica();
+    const config = await service.obtenerConfiguracionPublica({
+      tenant_id: req.tenantId,
+    });
     return exito(res, config);
   } catch (err) {
     return manejarError(res, err);
@@ -60,7 +62,10 @@ const crearConfiguracion = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const config = await service.crearConfiguracion({ datos: value });
+    const config = await service.crearConfiguracion({
+      datos: value,
+      tenant_id: req.tenantId,
+    });
     return creado(res, config, 'Configuración creada exitosamente.');
   } catch (err) {
     return manejarError(res, err);
@@ -76,7 +81,10 @@ const actualizarConfiguracion = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const config = await service.actualizarConfiguracion({ datos: value });
+    const config = await service.actualizarConfiguracion({
+      datos: value,
+      tenant_id: req.tenantId,
+    });
     return exito(res, config, 'Configuración actualizada exitosamente.');
   } catch (err) {
     return manejarError(res, err);

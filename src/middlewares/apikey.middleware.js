@@ -1,48 +1,53 @@
-// src/middlewares/apikey.middleware.js
-// Autenticación por API Key para el dte-service
-//
-// FLUJO DE SEGURIDAD:
-// 1. El POS envía la API Key en el header X-API-Key
-// 2. Este middleware compara la API Key contra el hash bcrypt almacenado
-// 3. Si coincide, continúa. Si no, rechaza con 401
-//
-// IMPORTANTE:
-// - La API Key raw NUNCA se almacena — solo el hash bcrypt
-// - El hash vive en la variable de entorno API_KEY_HASH
-// - Timing-safe comparison con bcrypt.compare para evitar timing attacks
-
 const bcrypt    = require('bcryptjs');
 const { API_KEY_HASH } = require('../config/env');
+const { query }  = require('../config/database');
 const { noAutenticado } = require('../utils/response');
 const logger    = require('../utils/logger');
 
-/**
- * Middleware de autenticación por API Key
- * El cliente debe enviar: X-API-Key: <api_key_raw>
- */
 const autenticarApiKey = async (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
+  const tenantId = req.headers['x-tenant-id'];
 
-  // Verificar que la API Key fue enviada
   if (!apiKey) {
-    logger.warn('Intento de acceso sin API Key', {
-      ip:   req.ip,
-      ruta: req.path,
-    });
+    logger.warn('Intento de acceso sin API Key', { ip: req.ip, ruta: req.path });
     return noAutenticado(res, 'Header X-API-Key requerido.');
   }
 
   try {
-    // Comparación timing-safe con bcrypt
-    // Esto evita ataques de timing que intentan adivinar la API Key
-    const valida = await bcrypt.compare(apiKey, API_KEY_HASH);
+    let hashValido = null;
+    let tenantEncontrado = null;
 
-    if (!valida) {
-      logger.warn('API Key inválida', {
-        ip:   req.ip,
-        ruta: req.path,
-      });
+    // Si hay X-Tenant-Id, buscar hash en DB
+    if (tenantId) {
+      const { rows } = await query(
+        'SELECT id, api_key_hash FROM tenants WHERE id = $1 AND activo = TRUE',
+        [tenantId]
+      );
+      if (rows.length > 0 && rows[0].api_key_hash) {
+        hashValido = rows[0].api_key_hash;
+        tenantEncontrado = rows[0].id;
+      }
+    }
+
+    // Fallback: hash del env para backward compat
+    if (!hashValido && API_KEY_HASH) {
+      hashValido = API_KEY_HASH;
+      // Sin tenant definido en este caso — el servicio opera sin scope
+    }
+
+    if (!hashValido) {
+      logger.warn('API Key sin hash válido', { ip: req.ip, ruta: req.path });
       return noAutenticado(res, 'API Key inválida.');
+    }
+
+    const valida = await bcrypt.compare(apiKey, hashValido);
+    if (!valida) {
+      logger.warn('API Key inválida', { ip: req.ip, ruta: req.path });
+      return noAutenticado(res, 'API Key inválida.');
+    }
+
+    if (tenantEncontrado) {
+      req.tenantId = tenantEncontrado;
     }
 
     next();

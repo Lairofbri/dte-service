@@ -10,6 +10,9 @@ const Joi = require('joi');
  * El establecimiento viene del JWT después del login
  */
 const loginSchema = Joi.object({
+  tenant_id: Joi.string().uuid().optional().messages({
+    'string.guid': 'El tenant_id debe ser un UUID válido.',
+  }),
   email: Joi.string()
     .email({ tlds: { allow: false } })
     .lowercase()
