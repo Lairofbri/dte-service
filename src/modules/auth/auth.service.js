@@ -48,6 +48,7 @@ const generarAccessToken = (usuario) => {
       email:              usuario.email,
       rol:                usuario.rol,
       establecimiento_id: usuario.establecimiento_id,
+      tenant_id:          usuario.tenant_id,
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRA_EN }
@@ -82,9 +83,10 @@ const generarRefreshToken = async (usuarioId) => {
 /**
  * Login con email + password
  */
-const login = async ({ email, password }) => {
+const login = async ({ email, password, tenant_id }) => {
   const usuario = await usuariosService.obtenerUsuarioPorEmail({
     email: email.toLowerCase(),
+    tenant_id,
   });
 
   if (!usuario) {
@@ -149,6 +151,7 @@ const login = async ({ email, password }) => {
       email:              usuario.email,
       rol:                usuario.rol,
       establecimiento_id: usuario.establecimiento_id,
+      tenant_id:          usuario.tenant_id,
       establecimiento:    usuario.establecimiento_nombre ? {
         nombre:         usuario.establecimiento_nombre,
         cod_estable_mh: usuario.establecimiento_cod,
@@ -173,6 +176,7 @@ const refresh = async ({ refreshToken }) => {
        u.email,
        u.rol,
        u.establecimiento_id,
+       u.tenant_id,
        u.activo,
        u.bloqueado_hasta,
        e.nombre           AS establecimiento_nombre,
@@ -201,6 +205,7 @@ const refresh = async ({ refreshToken }) => {
     email:              t.email,
     rol:                t.rol,
     establecimiento_id: t.establecimiento_id,
+    tenant_id:          t.tenant_id,
   });
 
   logger.info('Access token renovado', { usuario_id: t.u_id });

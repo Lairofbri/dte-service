@@ -22,8 +22,9 @@ const manejarError = (res, err) => {
 const listar = async (req, res) => {
   const { error: ve, value } = buscarClientesSchema.validate(req.query);
   if (ve) return error(res, ve.details[0].message, 400);
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const resultado = await service.buscarClientes(value);
+    const resultado = await service.buscarClientes({ ...value, tenant_id });
     return exito(res, resultado);
   } catch (err) { return manejarError(res, err); }
 };
@@ -32,8 +33,9 @@ const listar = async (req, res) => {
 const obtener = async (req, res) => {
   if (!esUuidValido(req.params.id))
     return error(res, 'El ID del cliente no es un UUID válido.', 400);
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const cliente = await service.obtenerClientePorId(req.params.id);
+    const cliente = await service.obtenerClientePorId(req.params.id, tenant_id);
     return exito(res, cliente);
   } catch (err) { return manejarError(res, err); }
 };
@@ -42,8 +44,9 @@ const obtener = async (req, res) => {
 const crear = async (req, res) => {
   const { error: ve, value } = crearClienteSchema.validate(req.body);
   if (ve) return error(res, ve.details[0].message, 400);
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const cliente = await service.crearCliente(value);
+    const cliente = await service.crearCliente(value, tenant_id);
     return creado(res, cliente, 'Cliente creado correctamente.');
   } catch (err) { return manejarError(res, err); }
 };
@@ -54,8 +57,9 @@ const actualizar = async (req, res) => {
     return error(res, 'El ID del cliente no es un UUID válido.', 400);
   const { error: ve, value } = actualizarClienteSchema.validate(req.body);
   if (ve) return error(res, ve.details[0].message, 400);
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const cliente = await service.actualizarCliente(req.params.id, value);
+    const cliente = await service.actualizarCliente(req.params.id, value, tenant_id);
     return exito(res, cliente, 'Cliente actualizado correctamente.');
   } catch (err) { return manejarError(res, err); }
 };
@@ -64,8 +68,9 @@ const actualizar = async (req, res) => {
 const eliminar = async (req, res) => {
   if (!esUuidValido(req.params.id))
     return error(res, 'El ID del cliente no es un UUID válido.', 400);
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const resultado = await service.eliminarCliente(req.params.id);
+    const resultado = await service.eliminarCliente(req.params.id, tenant_id);
     return exito(res, resultado);
   } catch (err) { return manejarError(res, err); }
 };

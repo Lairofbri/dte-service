@@ -34,10 +34,15 @@ const mapearCliente = (row) => ({
 // BUSCAR — búsqueda parcial por nombre, NIT, num_documento
 // Usado para autocompletar en DTEEmitir
 // ─────────────────────────────────────────────
-const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10 }) => {
+const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10, tenant_id }) => {
   const offset = (pagina - 1) * limite;
   const params = [];
   const wheres = ['c.activo = true'];
+
+  if (tenant_id) {
+    params.push(tenant_id);
+    wheres.push(`c.tenant_id = $${params.length}`);
+  }
 
   if (tipo_cliente) {
     params.push(tipo_cliente);
@@ -90,15 +95,25 @@ const buscarClientes = async ({ q, tipo_cliente, pagina = 1, limite = 10 }) => {
 // ─────────────────────────────────────────────
 // OBTENER POR ID
 // ─────────────────────────────────────────────
-const obtenerClientePorId = async (id) => {
-  const { rows } = await query(
-    `SELECT c.*, COUNT(d.id) AS total_dtes
+const obtenerClientePorId = async (id, tenant_id) => {
+  let queryText, params;
+  if (tenant_id) {
+    queryText = `SELECT c.*, COUNT(d.id) AS total_dtes
+     FROM clientes c
+     LEFT JOIN dtes d ON d.cliente_id = c.id
+     WHERE c.id = $1 AND c.tenant_id = $2
+     GROUP BY c.id`;
+    params = [id, tenant_id];
+  } else {
+    queryText = `SELECT c.*, COUNT(d.id) AS total_dtes
      FROM clientes c
      LEFT JOIN dtes d ON d.cliente_id = c.id
      WHERE c.id = $1
-     GROUP BY c.id`,
-    [id]
-  );
+     GROUP BY c.id`;
+    params = [id];
+  }
+
+  const { rows } = await query(queryText, params);
 
   if (rows.length === 0) {
     throw { status: 404, mensaje: 'Cliente no encontrado.' };
@@ -110,58 +125,64 @@ const obtenerClientePorId = async (id) => {
 // ─────────────────────────────────────────────
 // CREAR
 // ─────────────────────────────────────────────
-const crearCliente = async (datos) => {
-  // Verificar duplicado por NIT si es jurídico
+const crearCliente = async (datos, tenant_id) => {
   if (datos.tipo_cliente === 'juridico' && datos.nit) {
-    const { rows: exist } = await query(
-      `SELECT id FROM clientes WHERE nit = $1 AND activo = true`,
-      [datos.nit]
-    );
+    let dupQuery, dupParams;
+    if (tenant_id) {
+      dupQuery = 'SELECT id FROM clientes WHERE nit = $1 AND tenant_id = $2 AND activo = true';
+      dupParams = [datos.nit, tenant_id];
+    } else {
+      dupQuery = 'SELECT id FROM clientes WHERE nit = $1 AND activo = true';
+      dupParams = [datos.nit];
+    }
+    const { rows: exist } = await query(dupQuery, dupParams);
     if (exist.length > 0) {
       throw { status: 409, mensaje: `Ya existe un cliente activo con el NIT ${datos.nit}.` };
     }
   }
 
-  // Verificar duplicado por num_documento si es natural con documento
   if (datos.tipo_cliente === 'natural' && datos.num_documento) {
-    const { rows: exist } = await query(
-      `SELECT id FROM clientes
-       WHERE num_documento = $1 AND tipo_documento = $2 AND activo = true`,
-      [datos.num_documento, datos.tipo_documento || '13']
-    );
+    let dupQuery, dupParams;
+    if (tenant_id) {
+      dupQuery = 'SELECT id FROM clientes WHERE num_documento = $1 AND tipo_documento = $2 AND tenant_id = $3 AND activo = true';
+      dupParams = [datos.num_documento, datos.tipo_documento || '13', tenant_id];
+    } else {
+      dupQuery = 'SELECT id FROM clientes WHERE num_documento = $1 AND tipo_documento = $2 AND activo = true';
+      dupParams = [datos.num_documento, datos.tipo_documento || '13'];
+    }
+    const { rows: exist } = await query(dupQuery, dupParams);
     if (exist.length > 0) {
-      throw {
-        status: 409,
-        mensaje: `Ya existe un cliente activo con ese número de documento.`,
-      };
+      throw { status: 409, mensaje: `Ya existe un cliente activo con ese número de documento.` };
     }
   }
 
+  const camposCli = [
+    'tipo_cliente', 'nombre', 'nombre_comercial',
+    'tipo_documento', 'num_documento',
+    'nit', 'nrc', 'cod_actividad', 'desc_actividad',
+    'departamento_cod', 'municipio_cod', 'direccion',
+    'telefono', 'correo',
+  ];
+  const valoresCli = [
+    datos.tipo_cliente, datos.nombre, datos.nombre_comercial || null,
+    datos.tipo_documento || null, datos.num_documento || null,
+    datos.nit || null, datos.nrc || null,
+    datos.cod_actividad || null, datos.desc_actividad || null,
+    datos.departamento_cod || null, datos.municipio_cod || null,
+    datos.direccion || null, datos.telefono || null, datos.correo || null,
+  ];
+
+  if (tenant_id) {
+    camposCli.push('tenant_id');
+    valoresCli.push(tenant_id);
+  }
+
+  const phCli = valoresCli.map((_, i) => `$${i + 1}`).join(',');
   const { rows } = await query(
-    `INSERT INTO clientes (
-       tipo_cliente, nombre, nombre_comercial,
-       tipo_documento, num_documento,
-       nit, nrc, cod_actividad, desc_actividad,
-       departamento_cod, municipio_cod, direccion,
-       telefono, correo
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+    `INSERT INTO clientes (${camposCli.join(', ')})
+     VALUES (${phCli})
      RETURNING *`,
-    [
-      datos.tipo_cliente,
-      datos.nombre,
-      datos.nombre_comercial  || null,
-      datos.tipo_documento    || null,
-      datos.num_documento     || null,
-      datos.nit               || null,
-      datos.nrc               || null,
-      datos.cod_actividad     || null,
-      datos.desc_actividad    || null,
-      datos.departamento_cod  || null,
-      datos.municipio_cod     || null,
-      datos.direccion         || null,
-      datos.telefono          || null,
-      datos.correo            || null,
-    ]
+    valoresCli
   );
 
   logger.info('Cliente creado', { id: rows[0].id, nombre: rows[0].nombre });
@@ -171,9 +192,8 @@ const crearCliente = async (datos) => {
 // ─────────────────────────────────────────────
 // ACTUALIZAR
 // ─────────────────────────────────────────────
-const actualizarCliente = async (id, datos) => {
-  // Verificar que existe
-  await obtenerClientePorId(id);
+const actualizarCliente = async (id, datos, tenant_id) => {
+  await obtenerClientePorId(id, tenant_id);
 
   // Verificar duplicado NIT si se está cambiando
   if (datos.nit) {
@@ -209,8 +229,13 @@ const actualizarCliente = async (id, datos) => {
   }
 
   params.push(id);
+  let whereCli = `WHERE id = $${params.length}`;
+  if (tenant_id) {
+    params.push(tenant_id);
+    whereCli += ` AND tenant_id = $${params.length}`;
+  }
   const { rows } = await query(
-    `UPDATE clientes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+    `UPDATE clientes SET ${sets.join(', ')} ${whereCli} RETURNING *`,
     params
   );
 
@@ -222,8 +247,8 @@ const actualizarCliente = async (id, datos) => {
 // SOFT DELETE
 // No se puede eliminar si tiene DTEs emitidos
 // ─────────────────────────────────────────────
-const eliminarCliente = async (id) => {
-  const cliente = await obtenerClientePorId(id);
+const eliminarCliente = async (id, tenant_id) => {
+  const cliente = await obtenerClientePorId(id, tenant_id);
 
   if (cliente.total_dtes > 0) {
     throw {

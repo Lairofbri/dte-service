@@ -56,10 +56,10 @@ const emitirFCF = async (req, res) => {
   const { error: validacionError, value } = emitirFCFSchema.validate(req.body);
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
-  // establecimiento_id siempre del JWT — nunca del body
+  // establecimiento_id: JWT > body > null (API Key puede enviarlo en body)
   const datos = {
     ...value,
-    establecimiento_id: req.usuario?.establecimiento_id || null,
+    establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
   };
 
   try {
@@ -81,7 +81,7 @@ const emitirCCF = async (req, res) => {
 
   const datos = {
     ...value,
-    establecimiento_id: req.usuario?.establecimiento_id || null,
+    establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
   };
 
   try {
@@ -150,7 +150,7 @@ const emitirFSE = async (req, res) => {
   const datos = {
     ...value,
     receptor,
-    establecimiento_id: req.usuario?.establecimiento_id || null,
+    establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
   };
 
   try {
@@ -213,6 +213,7 @@ const listarDTEs = async (req, res) => {
     const resultado = await service.listarDTEs({
       filtros,
       establecimientoId: req.establecimientoId,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
     });
     return exito(res, resultado);
   } catch (err) {
@@ -236,6 +237,7 @@ const obtenerDTE = async (req, res) => {
     const dte = await service.obtenerDTE({
       codigoGeneracion,
       establecimientoId: req.establecimientoId,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
     });
     return exito(res, dte);
   } catch (err) {

@@ -1,6 +1,6 @@
 // src/config/database.js
 // Pool de conexiones PostgreSQL para el dte-service
-// Una instancia = un cliente = una BD propia
+// Multi-tenant: una BD compartida con tenant_id en todas las tablas
 
 const { Pool } = require('pg');
 const { DATABASE_URL, ES_PRODUCCION } = require('./env');
@@ -8,7 +8,9 @@ const logger = require('../utils/logger');
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: ES_PRODUCCION ? { rejectUnauthorized: false } : false,
+  ssl: ES_PRODUCCION || DATABASE_URL?.includes('railway')
+    ? { rejectUnauthorized: false }
+    : false,
   max:              10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,

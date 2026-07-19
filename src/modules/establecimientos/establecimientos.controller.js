@@ -45,9 +45,10 @@ const manejarError = (res, err) => {
  */
 const listarEstablecimientos = async (req, res) => {
   const soloActivos = req.query.solo_activos === 'true';
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
 
   try {
-    const establecimientos = await service.listarEstablecimientos({ soloActivos });
+    const establecimientos = await service.listarEstablecimientos({ soloActivos, tenant_id });
     return exito(res, establecimientos);
   } catch (err) {
     return manejarError(res, err);
@@ -65,7 +66,10 @@ const obtenerEstablecimiento = async (req, res) => {
   }
 
   try {
-    const establecimiento = await service.obtenerEstablecimiento({ id: req.params.id });
+    const establecimiento = await service.obtenerEstablecimiento({
+      id: req.params.id,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
+    });
     return exito(res, establecimiento);
   } catch (err) {
     return manejarError(res, err);
@@ -81,7 +85,10 @@ const crearEstablecimiento = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const establecimiento = await service.crearEstablecimiento({ datos: value });
+    const establecimiento = await service.crearEstablecimiento({
+      datos: value,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
+    });
     return creado(res, establecimiento, 'Establecimiento creado exitosamente.');
   } catch (err) {
     return manejarError(res, err);
@@ -105,6 +112,7 @@ const actualizarEstablecimiento = async (req, res) => {
     const establecimiento = await service.actualizarEstablecimiento({
       id:    req.params.id,
       datos: value,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
     });
     return exito(res, establecimiento, 'Establecimiento actualizado exitosamente.');
   } catch (err) {
@@ -123,7 +131,10 @@ const desactivarEstablecimiento = async (req, res) => {
   }
 
   try {
-    await service.desactivarEstablecimiento({ id: req.params.id });
+    await service.desactivarEstablecimiento({
+      id: req.params.id,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
+    });
     return exito(res, null, 'Establecimiento desactivado exitosamente.');
   } catch (err) {
     return manejarError(res, err);

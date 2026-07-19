@@ -40,8 +40,20 @@ const formatearEstablecimiento = (row) => ({
  * Listar todos los establecimientos
  * Incluye conteo de DTEs por establecimiento para información
  */
-const listarEstablecimientos = async ({ soloActivos = false } = {}) => {
-  const condicion = soloActivos ? 'WHERE e.activo = TRUE' : '';
+const listarEstablecimientos = async ({ soloActivos = false, tenant_id } = {}) => {
+  const condiciones = [];
+  const valores = [];
+  let idx = 1;
+
+  if (tenant_id) {
+    condiciones.push(`e.tenant_id = $${idx++}`);
+    valores.push(tenant_id);
+  }
+  if (soloActivos) {
+    condiciones.push('e.activo = TRUE');
+  }
+
+  const where = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
   const { rows } = await query(
     `SELECT
@@ -62,9 +74,10 @@ const listarEstablecimientos = async ({ soloActivos = false } = {}) => {
        COUNT(d.id) AS total_dtes
      FROM establecimientos e
      LEFT JOIN dtes d ON d.establecimiento_id = e.id
-     ${condicion}
+     ${where}
      GROUP BY e.id
-     ORDER BY e.activo DESC, e.nombre ASC`
+     ORDER BY e.activo DESC, e.nombre ASC`,
+    valores
   );
 
   return rows.map(formatearEstablecimiento);
@@ -74,9 +87,32 @@ const listarEstablecimientos = async ({ soloActivos = false } = {}) => {
  * Obtener un establecimiento por ID
  * Valida que existe antes de retornar
  */
-const obtenerEstablecimiento = async ({ id }) => {
-  const { rows } = await query(
-    `SELECT
+const obtenerEstablecimiento = async ({ id, tenant_id }) => {
+  let queryText, params;
+  if (tenant_id) {
+    queryText = `SELECT
+       e.id,
+       e.cod_estable_mh,
+       e.cod_punto_venta_mh,
+       e.cod_estable,
+       e.cod_punto_venta,
+       e.nombre,
+       e.direccion,
+       e.departamento_cod,
+       e.municipio_cod,
+       e.telefono,
+       e.email,
+       e.activo,
+       e.creado_en,
+       e.actualizado_en,
+       COUNT(d.id) AS total_dtes
+     FROM establecimientos e
+     LEFT JOIN dtes d ON d.establecimiento_id = e.id
+     WHERE e.id = $1 AND e.tenant_id = $2
+     GROUP BY e.id`;
+    params = [id, tenant_id];
+  } else {
+    queryText = `SELECT
        e.id,
        e.cod_estable_mh,
        e.cod_punto_venta_mh,
@@ -95,9 +131,11 @@ const obtenerEstablecimiento = async ({ id }) => {
      FROM establecimientos e
      LEFT JOIN dtes d ON d.establecimiento_id = e.id
      WHERE e.id = $1
-     GROUP BY e.id`,
-    [id]
-  );
+     GROUP BY e.id`;
+    params = [id];
+  }
+
+  const { rows } = await query(queryText, params);
 
   if (rows.length === 0) {
     throw { status: 404, mensaje: 'Establecimiento no encontrado.' };
@@ -111,7 +149,7 @@ const obtenerEstablecimiento = async ({ id }) => {
  * Al crear se inicializan automáticamente los correlativos
  * para todos los tipos de DTE en ambos ambientes
  */
-const crearEstablecimiento = async ({ datos }) => {
+const crearEstablecimiento = async ({ datos, tenant_id }) => {
   const {
     cod_estable_mh, cod_punto_venta_mh,
     cod_estable, cod_punto_venta,
@@ -137,15 +175,29 @@ const crearEstablecimiento = async ({ datos }) => {
   try {
     await client.query('BEGIN');
 
-    // Crear el establecimiento
+    const camposEst = [
+      'cod_estable_mh', 'cod_punto_venta_mh',
+      'cod_estable', 'cod_punto_venta',
+      'nombre', 'direccion',
+      'departamento_cod', 'municipio_cod',
+      'telefono', 'email',
+    ];
+    const valoresEst = [
+      cod_estable_mh, cod_punto_venta_mh,
+      cod_estable || cod_estable_mh, cod_punto_venta || cod_punto_venta_mh,
+      nombre, direccion, departamento_cod, municipio_cod,
+      telefono || null, email || null,
+    ];
+
+    if (tenant_id) {
+      camposEst.push('tenant_id');
+      valoresEst.push(tenant_id);
+    }
+
+    const phEst = valoresEst.map((_, i) => `$${i + 1}`).join(',');
     const { rows } = await client.query(
-      `INSERT INTO establecimientos (
-         cod_estable_mh, cod_punto_venta_mh,
-         cod_estable, cod_punto_venta,
-         nombre, direccion,
-         departamento_cod, municipio_cod,
-         telefono, email
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      `INSERT INTO establecimientos (${camposEst.join(', ')})
+       VALUES (${phEst})
        RETURNING
          id, cod_estable_mh, cod_punto_venta_mh,
          cod_estable, cod_punto_venta,
@@ -153,18 +205,7 @@ const crearEstablecimiento = async ({ datos }) => {
          departamento_cod, municipio_cod,
          telefono, email,
          activo, creado_en, actualizado_en`,
-      [
-        cod_estable_mh,
-        cod_punto_venta_mh,
-        cod_estable    || cod_estable_mh,    // por defecto igual al de Hacienda
-        cod_punto_venta || cod_punto_venta_mh, // por defecto igual al de Hacienda
-        nombre,
-        direccion,
-        departamento_cod,
-        municipio_cod,
-        telefono || null,
-        email    || null,
-      ]
+      valoresEst
     );
 
     const establecimientoId = rows[0].id;
@@ -208,9 +249,8 @@ const crearEstablecimiento = async ({ datos }) => {
  * REGLA CRÍTICA: cod_estable_mh NO se puede cambiar si tiene DTEs emitidos
  * porque cambiaría el número de control histórico de esos DTEs
  */
-const actualizarEstablecimiento = async ({ id, datos }) => {
-  // Verificar que existe
-  await obtenerEstablecimiento({ id });
+const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
+  await obtenerEstablecimiento({ id, tenant_id });
 
   // Si intenta cambiar cod_estable_mh — verificar que no tiene DTEs
   if (datos.cod_estable_mh) {
@@ -267,10 +307,17 @@ const actualizarEstablecimiento = async ({ id, datos }) => {
 
   valores.push(id);
 
+  let whereEst = `WHERE id = $${idx}`;
+  if (tenant_id) {
+    idx++;
+    whereEst += ` AND tenant_id = $${idx}`;
+    valores.push(tenant_id);
+  }
+
   const { rows } = await query(
     `UPDATE establecimientos
      SET ${campos.join(', ')}
-     WHERE id = $${idx}
+     ${whereEst}
      RETURNING
        id, cod_estable_mh, cod_punto_venta_mh,
        cod_estable, cod_punto_venta,
@@ -292,8 +339,8 @@ const actualizarEstablecimiento = async ({ id, datos }) => {
  * El endpoint DELETE hace un UPDATE activo = FALSE, no un DELETE real
  * Verificar que no tiene DTEs pendientes antes de desactivar
  */
-const desactivarEstablecimiento = async ({ id }) => {
-  const establecimiento = await obtenerEstablecimiento({ id });
+const desactivarEstablecimiento = async ({ id, tenant_id }) => {
+  const establecimiento = await obtenerEstablecimiento({ id, tenant_id });
 
   // Verificar que no está ya inactivo
   if (!establecimiento.activo) {

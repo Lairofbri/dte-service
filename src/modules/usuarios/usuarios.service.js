@@ -48,8 +48,21 @@ const formatearUsuario = (row) => ({
  * Listar usuarios con datos de su establecimiento
  * Alias u. para usuarios, e. para establecimientos
  */
-const listarUsuarios = async ({ soloActivos = false } = {}) => {
-  const condicion = soloActivos ? 'WHERE u.activo = TRUE' : '';
+const listarUsuarios = async ({ soloActivos = false, tenant_id } = {}) => {
+  const condiciones = [];
+  const valores = [];
+  let idx = 1;
+
+  if (tenant_id) {
+    condiciones.push(`u.tenant_id = $${idx++}`);
+    valores.push(tenant_id);
+  }
+
+  if (soloActivos) {
+    condiciones.push('u.activo = TRUE');
+  }
+
+  const where = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
   const { rows } = await query(
     `SELECT
@@ -68,8 +81,9 @@ const listarUsuarios = async ({ soloActivos = false } = {}) => {
        e.cod_estable_mh AS establecimiento_cod
      FROM usuarios u
      INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     ${condicion}
-     ORDER BY u.activo DESC, u.nombre ASC`
+     ${where}
+     ORDER BY u.activo DESC, u.nombre ASC`,
+    valores
   );
 
   return rows.map(formatearUsuario);
@@ -79,9 +93,11 @@ const listarUsuarios = async ({ soloActivos = false } = {}) => {
  * Obtener un usuario por ID
  * Alias u. para usuarios, e. para establecimientos
  */
-const obtenerUsuario = async ({ id }) => {
-  const { rows } = await query(
-    `SELECT
+const obtenerUsuario = async ({ id, tenant_id }) => {
+  let queryText, params;
+
+  if (tenant_id) {
+    queryText = `SELECT
        u.id,
        u.nombre,
        u.email,
@@ -97,9 +113,30 @@ const obtenerUsuario = async ({ id }) => {
        e.cod_estable_mh AS establecimiento_cod
      FROM usuarios u
      INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     WHERE u.id = $1`,
-    [id]
-  );
+     WHERE u.id = $1 AND u.tenant_id = $2`;
+    params = [id, tenant_id];
+  } else {
+    queryText = `SELECT
+       u.id,
+       u.nombre,
+       u.email,
+       u.rol,
+       u.establecimiento_id,
+       u.activo,
+       u.intentos_fallidos,
+       u.bloqueado_hasta,
+       u.ultimo_login,
+       u.creado_en,
+       u.actualizado_en,
+       e.nombre         AS establecimiento_nombre,
+       e.cod_estable_mh AS establecimiento_cod
+     FROM usuarios u
+     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
+     WHERE u.id = $1`;
+    params = [id];
+  }
+
+  const { rows } = await query(queryText, params);
 
   if (rows.length === 0) {
     throw { status: 404, mensaje: 'Usuario no encontrado.' };
@@ -113,15 +150,18 @@ const obtenerUsuario = async ({ id }) => {
  * Solo para uso interno del módulo de auth
  * NUNCA devolver al cliente HTTP
  */
-const obtenerUsuarioPorEmail = async ({ email }) => {
-  const { rows } = await query(
-    `SELECT
+const obtenerUsuarioPorEmail = async ({ email, tenant_id }) => {
+  let queryText, params;
+
+  if (tenant_id) {
+    queryText = `SELECT
        u.id,
        u.nombre,
        u.email,
        u.password_hash,
        u.rol,
        u.establecimiento_id,
+       u.tenant_id,
        u.activo,
        u.intentos_fallidos,
        u.bloqueado_hasta,
@@ -130,9 +170,30 @@ const obtenerUsuarioPorEmail = async ({ email }) => {
        e.cod_estable_mh AS establecimiento_cod
      FROM usuarios u
      INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     WHERE u.email = $1`,
-    [email.toLowerCase()]
-  );
+     WHERE u.email = $1 AND u.tenant_id = $2`;
+    params = [email.toLowerCase(), tenant_id];
+  } else {
+    queryText = `SELECT
+       u.id,
+       u.nombre,
+       u.email,
+       u.password_hash,
+       u.rol,
+       u.establecimiento_id,
+       u.tenant_id,
+       u.activo,
+       u.intentos_fallidos,
+       u.bloqueado_hasta,
+       u.ultimo_login,
+       e.nombre         AS establecimiento_nombre,
+       e.cod_estable_mh AS establecimiento_cod
+     FROM usuarios u
+     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
+     WHERE u.email = $1`;
+    params = [email.toLowerCase()];
+  }
+
+  const { rows } = await query(queryText, params);
 
   if (rows.length === 0) return null;
   return rows[0];
@@ -143,7 +204,7 @@ const obtenerUsuarioPorEmail = async ({ email }) => {
  * Password hasheado con bcrypt antes de guardar
  * Verificar email único y establecimiento activo
  */
-const crearUsuario = async ({ datos }) => {
+const crearUsuario = async ({ datos, tenant_id }) => {
   const {
     nombre, email, password,
     rol, establecimiento_id,
@@ -177,8 +238,8 @@ const crearUsuario = async ({ datos }) => {
   const { rows } = await query(
     `INSERT INTO usuarios (
        nombre, email, password_hash,
-       rol, establecimiento_id
-     ) VALUES ($1,$2,$3,$4,$5)
+       rol, establecimiento_id, tenant_id
+     ) VALUES ($1,$2,$3,$4,$5,$6)
      RETURNING
        id, nombre, email, rol,
        establecimiento_id, activo,
@@ -190,6 +251,7 @@ const crearUsuario = async ({ datos }) => {
       password_hash,
       rol,
       establecimiento_id,
+      tenant_id || null,
     ]
   );
 

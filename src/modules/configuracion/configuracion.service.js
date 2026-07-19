@@ -59,9 +59,10 @@ const formatearParaRespuesta = (row) => ({
  * Obtener la configuración actual
  * Retorna datos del emisor SIN credenciales
  */
-const obtenerConfiguracion = async () => {
-  const { rows } = await query(
-    `SELECT
+const obtenerConfiguracion = async ({ tenant_id } = {}) => {
+  let queryText, params;
+  if (tenant_id) {
+    queryText = `SELECT
        id, nit, nrc, nombre, nombre_comercial,
        direccion, telefono, email, correo,
        codigo_actividad, codigo_establecimiento,
@@ -72,8 +73,25 @@ const obtenerConfiguracion = async () => {
        token_hacienda, token_expira_en,
        activo, creado_en, actualizado_en
      FROM configuracion
-     LIMIT 1`
-  );
+     WHERE tenant_id = $1`;
+    params = [tenant_id];
+  } else {
+    queryText = `SELECT
+       id, nit, nrc, nombre, nombre_comercial,
+       direccion, telefono, email, correo,
+       codigo_actividad, codigo_establecimiento,
+       codigo_punto_venta, tipo_establecimiento,
+       ambiente,
+       departamento_cod, municipio_cod, desc_actividad,
+       usuario_hacienda, password_hacienda,
+       token_hacienda, token_expira_en,
+       activo, creado_en, actualizado_en
+     FROM configuracion
+     LIMIT 1`;
+    params = [];
+  }
+
+  const { rows } = await query(queryText, params);
 
   if (rows.length === 0) {
     throw { status: 404, mensaje: 'No hay configuración registrada. Crea una primero.' };
@@ -85,8 +103,8 @@ const obtenerConfiguracion = async () => {
 /**
  * Obtener configuración formateada para respuesta HTTP (sin datos sensibles)
  */
-const obtenerConfiguracionPublica = async () => {
-  const config = await obtenerConfiguracion();
+const obtenerConfiguracionPublica = async ({ tenant_id } = {}) => {
+  const config = await obtenerConfiguracion({ tenant_id });
   return formatearParaRespuesta(config);
 };
 
@@ -95,8 +113,8 @@ const obtenerConfiguracionPublica = async () => {
  * SOLO para uso de otros módulos (hacienda, firmador)
  * NUNCA devolver al cliente HTTP
  */
-const obtenerCredencialesHacienda = async () => {
-  const config = await obtenerConfiguracion();
+const obtenerCredencialesHacienda = async ({ tenant_id } = {}) => {
+  const config = await obtenerConfiguracion({ tenant_id });
 
   if (!config.usuario_hacienda || !config.password_hacienda) {
     throw { status: 400, mensaje: 'No hay credenciales de Hacienda configuradas.' };
@@ -115,20 +133,26 @@ const obtenerCredencialesHacienda = async () => {
  * Solo puede existir UNA configuración por instancia
  * Las credenciales se encriptan antes de guardar
  */
-const crearConfiguracion = async ({ datos }) => {
+const crearConfiguracion = async ({ datos, tenant_id }) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
 
-    // Fix CUBIC: bloquear la tabla ANTES de verificar existencia
-    // Evita race condition TOCTOU — ningún otro proceso puede insertar
-    // mientras este tiene el lock exclusivo
-    await client.query('LOCK TABLE configuracion IN EXCLUSIVE MODE');
+    let queryExiste, paramsExiste;
+    let lockTable = false;
 
-    // Verificar existencia DENTRO de la transacción con el lock activo
-    const { rows: existe } = await client.query(
-      'SELECT id FROM configuracion LIMIT 1'
-    );
+    if (tenant_id) {
+      queryExiste = 'SELECT id FROM configuracion WHERE tenant_id = $1 LIMIT 1';
+      paramsExiste = [tenant_id];
+    } else {
+      // Legacy: sin tenant_id → LOCK TABLE (single-tenant)
+      await client.query('LOCK TABLE configuracion IN EXCLUSIVE MODE');
+      queryExiste = 'SELECT id FROM configuracion LIMIT 1';
+      paramsExiste = [];
+      lockTable = true;
+    }
+
+    const { rows: existe } = await client.query(queryExiste, paramsExiste);
     if (existe.length > 0) {
       await client.query('ROLLBACK');
       throw {
@@ -170,15 +194,35 @@ const crearConfiguracion = async ({ datos }) => {
       logger.warn('crearConfiguracion: usando municipio_cod "14" por defecto');
     }
 
+    const camposInsert = [
+      'nit', 'nrc', 'nombre', 'nombre_comercial',
+      'direccion', 'telefono', 'email', 'correo',
+      'codigo_actividad', 'codigo_establecimiento',
+      'codigo_punto_venta', 'tipo_establecimiento',
+      'usuario_hacienda', 'password_hacienda',
+      'ambiente', 'departamento_cod', 'municipio_cod', 'desc_actividad',
+    ];
+    const valoresInsert = [
+      nit, nrc || null, nombre, nombre_comercial || null,
+      direccion, telefono || null, email || null, correo || email || null,
+      codigo_actividad, codigo_establecimiento || '0001',
+      codigo_punto_venta || '0001', tipo_establecimiento || '02',
+      usuarioEncriptado, passwordEncriptado,
+      ambiente || '00', departamento_cod || '06', municipio_cod || '14',
+      desc_actividad || null,
+    ];
+
+    if (tenant_id) {
+      camposInsert.push('tenant_id');
+      valoresInsert.push(tenant_id);
+    }
+
+    const placeholders = valoresInsert.map((_, i) => `$${i + 1}`).join(',');
+    const camposStr = camposInsert.join(', ');
+
     const { rows } = await client.query(
-      `INSERT INTO configuracion (
-         nit, nrc, nombre, nombre_comercial,
-         direccion, telefono, email, correo,
-         codigo_actividad, codigo_establecimiento,
-         codigo_punto_venta, tipo_establecimiento,
-         usuario_hacienda, password_hacienda,
-         ambiente, departamento_cod, municipio_cod, desc_actividad
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      `INSERT INTO configuracion (${camposStr})
+       VALUES (${placeholders})
        RETURNING
          id, nit, nrc, nombre, nombre_comercial,
          direccion, telefono, email, correo,
@@ -188,26 +232,7 @@ const crearConfiguracion = async ({ datos }) => {
          usuario_hacienda, password_hacienda,
          token_hacienda, token_expira_en,
          activo, creado_en, actualizado_en`,
-      [
-        nit,
-        nrc                    || null,
-        nombre,
-        nombre_comercial       || null,
-        direccion,
-        telefono               || null,
-        email                  || null,
-        correo                 || email || null,
-        codigo_actividad,
-        codigo_establecimiento || '0001',
-        codigo_punto_venta     || '0001',
-        tipo_establecimiento   || '02',
-        usuarioEncriptado,
-        passwordEncriptado,
-        ambiente               || '00',
-        departamento_cod       || '06',
-        municipio_cod          || '14',
-        desc_actividad         || null,
-      ]
+      valoresInsert
     );
 
     await client.query('COMMIT');
@@ -233,9 +258,8 @@ const crearConfiguracion = async ({ datos }) => {
  * Solo actualiza los campos enviados (PATCH semántico)
  * Re-encripta las credenciales si se actualizan
  */
-const actualizarConfiguracion = async ({ datos }) => {
-  // Verificar que existe configuración
-  await obtenerConfiguracion();
+const actualizarConfiguracion = async ({ datos, tenant_id }) => {
+  await obtenerConfiguracion({ tenant_id });
 
   const camposPermitidos = [
     'nit', 'nrc', 'nombre', 'nombre_comercial',
@@ -283,9 +307,15 @@ const actualizarConfiguracion = async ({ datos }) => {
     throw { status: 400, mensaje: 'No hay campos válidos para actualizar.' };
   }
 
+  let whereClause = 'WHERE id = (SELECT id FROM configuracion LIMIT 1)';
+  if (tenant_id) {
+    whereClause = 'WHERE tenant_id = $' + (idx++);
+    valores.push(tenant_id);
+  }
+
   const { rows } = await query(
     `UPDATE configuracion SET ${campos.join(', ')}
-     WHERE id = (SELECT id FROM configuracion LIMIT 1)
+     ${whereClause}
      RETURNING
        id, nit, nrc, nombre, nombre_comercial,
        direccion, telefono, email, correo,
@@ -311,14 +341,23 @@ const actualizarConfiguracion = async ({ datos }) => {
  * Solo para uso interno del módulo de Hacienda
  * El cliente NUNCA ve este token
  */
-const guardarTokenHacienda = async ({ token, expiraEn }) => {
-  await query(
-    `UPDATE configuracion
+const guardarTokenHacienda = async ({ token, expiraEn, tenant_id }) => {
+  let queryText, params;
+  if (tenant_id) {
+    queryText = `UPDATE configuracion
      SET token_hacienda  = $1,
          token_expira_en = $2
-     WHERE id = (SELECT id FROM configuracion LIMIT 1)`,
-    [encriptar(token), expiraEn]
-  );
+     WHERE tenant_id = $3`;
+    params = [encriptar(token), expiraEn, tenant_id];
+  } else {
+    queryText = `UPDATE configuracion
+     SET token_hacienda  = $1,
+         token_expira_en = $2
+     WHERE id = (SELECT id FROM configuracion LIMIT 1)`;
+    params = [encriptar(token), expiraEn];
+  }
+
+  await query(queryText, params);
 
   logger.info('Token de Hacienda renovado', {
     expira_en: expiraEn,
@@ -330,12 +369,21 @@ const guardarTokenHacienda = async ({ token, expiraEn }) => {
  * Solo para uso interno del módulo de Hacienda
  * NUNCA devolver al cliente HTTP
  */
-const obtenerTokenHacienda = async () => {
-  const { rows } = await query(
-    `SELECT token_hacienda, token_expira_en
+const obtenerTokenHacienda = async ({ tenant_id } = {}) => {
+  let queryText, params;
+  if (tenant_id) {
+    queryText = `SELECT token_hacienda, token_expira_en
      FROM configuracion
-     LIMIT 1`
-  );
+     WHERE tenant_id = $1`;
+    params = [tenant_id];
+  } else {
+    queryText = `SELECT token_hacienda, token_expira_en
+     FROM configuracion
+     LIMIT 1`;
+    params = [];
+  }
+
+  const { rows } = await query(queryText, params);
 
   if (rows.length === 0 || !rows[0].token_hacienda) {
     return null;

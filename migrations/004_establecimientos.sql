@@ -65,16 +65,29 @@ INSERT INTO establecimientos (
   departamento_cod, municipio_cod
 )
 SELECT
-  COALESCE(codigo_establecimiento, '0001'),
-  COALESCE(codigo_punto_venta, '0001'),
-  COALESCE(codigo_establecimiento, '0001'),
-  COALESCE(codigo_punto_venta, '0001'),
+  COALESCE(codigo_establecimiento, 'M001'),
+  COALESCE(codigo_punto_venta, 'P001'),
+  COALESCE(codigo_establecimiento, 'M001'),
+  COALESCE(codigo_punto_venta, 'P001'),
   COALESCE(nombre_comercial, nombre, 'Establecimiento Principal'),
   COALESCE(direccion, 'Sin dirección'),
   COALESCE(departamento_cod, '06'),
   COALESCE(municipio_cod, '14')
 FROM configuracion
 LIMIT 1
+ON CONFLICT DO NOTHING;
+
+-- Si no hay datos en configuracion, insertar establecimiento por defecto
+INSERT INTO establecimientos (
+  cod_estable_mh, cod_punto_venta_mh,
+  cod_estable, cod_punto_venta,
+  nombre, direccion,
+  departamento_cod, municipio_cod
+)
+SELECT 'M001', 'P001', 'M001', 'P001',
+       'Establecimiento Principal', 'Sin dirección',
+       '06', '14'
+WHERE NOT EXISTS (SELECT 1 FROM establecimientos)
 ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────

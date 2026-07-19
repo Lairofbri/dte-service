@@ -41,45 +41,56 @@ const guardarDTE = async ({
   totalGravado, totalIva, total,
   receptorNombre, receptorNit, receptorNrc,
   establecimientoId, condicionOperacion, clienteId,
+  tenant_id,
 }) => {
+  const camposDte = [
+    'tipo_dte', 'codigo_generacion', 'numero_control', 'ambiente',
+    'estado', 'sello_recepcion', 'json_dte', 'json_firmado',
+    'errores_hacienda', 'observaciones', 'orden_referencia',
+    'receptor_nombre', 'receptor_nit', 'receptor_nrc',
+    'total_gravado', 'total_iva', 'total',
+    'fecha_emision', 'hora_emision',
+    'establecimiento_id', 'condicion_operacion', 'cliente_id',
+  ];
+  const valoresDte = [
+    tipoDte, codigoGeneracion, numeroControl, ambiente,
+    estado, selloRecepcion || null, JSON.stringify(jsonDte),
+    jsonFirmado || null,
+    erroresHacienda ? JSON.stringify(erroresHacienda) : null,
+    observaciones ? JSON.stringify(observaciones) : null,
+    ordenReferencia || null,
+    receptorNombre || null, receptorNit || null, receptorNrc || null,
+    totalGravado || 0, totalIva || 0, total || 0,
+    jsonDte.identificacion.fecEmi, jsonDte.identificacion.horEmi,
+    establecimientoId || null, condicionOperacion || 1, clienteId || null,
+  ];
+
+  // Obtener tenant_id del establecimiento
+  if (!tenant_id && establecimientoId) {
+    const { query: dbQuery } = require('../../config/database');
+    const { rows: estRows } = await dbQuery(
+      'SELECT tenant_id FROM establecimientos WHERE id = $1',
+      [establecimientoId]
+    );
+    if (estRows.length > 0 && estRows[0].tenant_id) {
+      tenant_id = estRows[0].tenant_id;
+    }
+  }
+
+  if (tenant_id) {
+    camposDte.push('tenant_id');
+    valoresDte.push(tenant_id);
+  }
+
+  const phDte = valoresDte.map((_, i) => `$${i + 1}`).join(',');
   const { rows } = await query(
-    `INSERT INTO dtes (
-       tipo_dte, codigo_generacion, numero_control, ambiente,
-       estado, sello_recepcion, json_dte, json_firmado,
-       errores_hacienda, observaciones, orden_referencia,
-       receptor_nombre, receptor_nit, receptor_nrc,
-       total_gravado, total_iva, total,
-       fecha_emision, hora_emision,
-       establecimiento_id, condicion_operacion, cliente_id
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+    `INSERT INTO dtes (${camposDte.join(', ')})
+     VALUES (${phDte})
      RETURNING id, tipo_dte, codigo_generacion, numero_control,
                estado, sello_recepcion, fecha_emision, hora_emision,
                receptor_nombre, receptor_nit, receptor_nrc,
                total_gravado, total_iva, total`,
-    [
-      tipoDte,
-      codigoGeneracion,
-      numeroControl,
-      ambiente,
-      estado,
-      selloRecepcion     || null,
-      JSON.stringify(jsonDte),
-      jsonFirmado        || null,
-      erroresHacienda    ? JSON.stringify(erroresHacienda)  : null,
-      observaciones      ? JSON.stringify(observaciones)    : null,
-      ordenReferencia    || null,
-      receptorNombre     || null,
-      receptorNit        || null,
-      receptorNrc        || null,
-      totalGravado       || 0,
-      totalIva           || 0,
-      total              || 0,
-      jsonDte.identificacion.fecEmi,
-      jsonDte.identificacion.horEmi,
-      establecimientoId  || null,
-      condicionOperacion || 1,
-      clienteId          || null,
-    ]
+    valoresDte
   );
   return rows[0];
 };
@@ -364,15 +375,22 @@ const emitirFSE = async ({ datos, ip }) => {
 const anularDTE = async ({ datos, ip }) => {
   const { password_pri, codigo_generacion, ...datosAnulacion } = datos;
 
-  // Obtener el DTE a anular de la BD
+  const anularParams = [codigo_generacion.toUpperCase()];
+  let anularFiltro = '';
+
+  if (datos.tenant_id) {
+    anularFiltro = ` AND d.tenant_id = $2`;
+    anularParams.push(datos.tenant_id);
+  }
+
   const { rows } = await query(
     `SELECT d.id, d.tipo_dte, d.codigo_generacion, d.numero_control,
             d.sello_recepcion, d.fecha_emision, d.total_iva,
             d.total, d.estado,
             d.json_dte->>'receptor' as receptor_json
      FROM dtes d
-     WHERE d.codigo_generacion = $1`,
-    [codigo_generacion.toUpperCase()]
+     WHERE d.codigo_generacion = $1${anularFiltro}`,
+    anularParams
   );
 
   if (rows.length === 0) {
@@ -457,14 +475,18 @@ const anularDTE = async ({ datos, ip }) => {
  * establecimientoId: si viene del JWT filtra por establecimiento del usuario
  *                   si viene de API Key (undefined) no filtra — ve todos
  */
-const listarDTEs = async ({ filtros = {}, establecimientoId }) => {
+const listarDTEs = async ({ filtros = {}, establecimientoId, tenant_id }) => {
   const { tipo_dte, estado, fecha_desde, fecha_hasta, pagina = 1, limite = 20 } = filtros;
 
   const condiciones = ['1=1'];
   const valores     = [];
   let idx = 1;
 
-  // Scoping por establecimiento — JWT solo ve su establecimiento
+  if (tenant_id) {
+    condiciones.push(`d.tenant_id = $${idx++}`);
+    valores.push(tenant_id);
+  }
+
   if (establecimientoId) {
     condiciones.push(`d.establecimiento_id = $${idx++}`);
     valores.push(establecimientoId);
@@ -514,15 +536,19 @@ const listarDTEs = async ({ filtros = {}, establecimientoId }) => {
  * establecimientoId: si viene del JWT verifica que el DTE pertenece
  *                   al establecimiento del usuario (evita cross-tenant)
  */
-const obtenerDTE = async ({ codigoGeneracion, establecimientoId }) => {
-  // Construir filtro de establecimiento si viene del JWT
-  const filtroEstablecimiento = establecimientoId
-    ? 'AND d.establecimiento_id = $2'
-    : '';
+const obtenerDTE = async ({ codigoGeneracion, establecimientoId, tenant_id }) => {
+  let filtrosAdicionales = '';
+  const params = [codigoGeneracion.toUpperCase()];
 
-  const params = establecimientoId
-    ? [codigoGeneracion.toUpperCase(), establecimientoId]
-    : [codigoGeneracion.toUpperCase()];
+  if (tenant_id) {
+    filtrosAdicionales += ` AND d.tenant_id = $${params.length + 1}`;
+    params.push(tenant_id);
+  }
+
+  if (establecimientoId) {
+    filtrosAdicionales += ` AND d.establecimiento_id = $${params.length + 1}`;
+    params.push(establecimientoId);
+  }
 
   const { rows } = await query(
     `SELECT
@@ -535,7 +561,7 @@ const obtenerDTE = async ({ codigoGeneracion, establecimientoId }) => {
        d.creado_en, d.actualizado_en
      FROM dtes d
      WHERE d.codigo_generacion = $1
-     ${filtroEstablecimiento}`,
+     ${filtrosAdicionales}`,
     params
   );
 

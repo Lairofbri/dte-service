@@ -22,6 +22,7 @@ const establecimientosRoutes  = require('./modules/establecimientos/establecimie
 const usuariosRoutes          = require('./modules/usuarios/usuarios.routes');
 const authRoutes              = require('./modules/auth/auth.routes');
 const clientesRoutes          = require('./modules/clientes/clientes.routes');
+const tenantsRoutes           = require('./modules/tenants/tenants.routes');
 
 const app = express();
 
@@ -59,7 +60,7 @@ app.use(cors({
     callback(new Error(`Origen no permitido: ${origin}`));
   },
   methods:          ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders:   ['Content-Type', 'X-API-Key', 'Authorization'],
+  allowedHeaders:   ['Content-Type', 'X-API-Key', 'X-Tenant-Id', 'Authorization'],
   // credentials: true — requerido para que el navegador envíe cookies httpOnly
   credentials:      true,
 }));
@@ -115,6 +116,7 @@ app.use((req, _res, next) => {
 // ─────────────────────────────────────────────
 // Auth — sin API Key, maneja su propia autenticación
 app.use('/api/auth',          authRoutes);
+app.use('/api/tenants',       tenantsRoutes);
 app.use('/api/clientes',      clientesRoutes);
 
 app.use('/api/configuracion', configuracionRoutes);

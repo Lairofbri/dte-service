@@ -45,8 +45,9 @@ const manejarError = (res, err) => {
  */
 const listarUsuarios = async (req, res) => {
   const soloActivos = req.query.solo_activos === 'true';
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const usuarios = await service.listarUsuarios({ soloActivos });
+    const usuarios = await service.listarUsuarios({ soloActivos, tenant_id });
     return exito(res, usuarios);
   } catch (err) {
     return manejarError(res, err);
@@ -61,8 +62,9 @@ const obtenerUsuario = async (req, res) => {
   if (!esUuidValido(req.params.id)) {
     return error(res, 'El ID del usuario no tiene un formato UUID válido.', 400);
   }
+  const tenant_id = req.usuario?.tenant_id || req.tenantId;
   try {
-    const usuario = await service.obtenerUsuario({ id: req.params.id });
+    const usuario = await service.obtenerUsuario({ id: req.params.id, tenant_id });
     return exito(res, usuario);
   } catch (err) {
     return manejarError(res, err);
@@ -83,7 +85,10 @@ const crearUsuario = async (req, res) => {
   }
 
   try {
-    const usuario = await service.crearUsuario({ datos: value });
+    const usuario = await service.crearUsuario({
+      datos: value,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
+    });
     return creado(res, usuario, 'Usuario creado exitosamente.');
   } catch (err) {
     return manejarError(res, err);

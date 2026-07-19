@@ -59,8 +59,9 @@ const login = async (req, res) => {
 
   try {
     const resultado = await service.login({
-      email:    value.email,
-      password: value.password,
+      email:     value.email,
+      password:  value.password,
+      tenant_id: value.tenant_id || req.headers['x-tenant-id'],
     });
 
     // Guardar refresh token en httpOnly cookie

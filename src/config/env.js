@@ -36,10 +36,12 @@ module.exports = {
 
   // ── Seguridad del servicio ──
   // API Key hasheada con bcrypt — el POS envía la API Key raw
-  // este servicio la compara contra el hash almacenado aquí
-  API_KEY_HASH:    requerida('API_KEY_HASH'),
+  // este servicio la compara contra el hash. Opcional: si no está en env,
+  // se obtiene de la tabla tenants (multi-tenant).
+  API_KEY_HASH:    opcional('API_KEY_HASH'),
   // Clave AES-256 para encriptar credenciales sensibles en BD
-  ENCRYPTION_KEY:  requerida('ENCRYPTION_KEY'),
+  // Opcional: si no está en env, se obtiene de la tabla tenants.
+  ENCRYPTION_KEY:  opcional('ENCRYPTION_KEY'),
 
   // ── Hacienda — solo URLs e infraestructura ──
   // Los datos del emisor (NIT, nombre, credenciales) viven en la BD
