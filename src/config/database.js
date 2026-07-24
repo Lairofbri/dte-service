@@ -8,7 +8,7 @@ const logger = require('../utils/logger');
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: ES_PRODUCCION || DATABASE_URL?.includes('railway')
+  ssl: ES_PRODUCCION
     ? { rejectUnauthorized: false }
     : false,
   max:              10,

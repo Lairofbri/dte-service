@@ -19,7 +19,8 @@ const autenticarJWT = (req, res, next) => {
       id:                 payload.sub,
       email:              payload.email,
       rol:                payload.rol,
-      establecimiento_id: payload.establecimiento_id,
+      sucursal_id:        payload.sucursal_id || null,
+      establecimiento_id: payload.establecimiento_id || null,
       tenant_id:          payload.tenant_id,
     };
 

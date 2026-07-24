@@ -8,3 +8,6 @@ npm-debug.log*
 AGENTS.md
 Archivos hacienda
 scripts
+playwright-report/
+test-results/
+tests/.auth/
