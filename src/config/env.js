@@ -83,7 +83,7 @@ JWT_SECRET: (() => {
   }
   return secret;
 })(),
-  JWT_EXPIRA_EN:         opcional('JWT_EXPIRA_EN', '8h'),
+  JWT_EXPIRA_EN:         opcional('JWT_EXPIRA_EN', '15m'),
   JWT_REFRESH_EXPIRA_EN: opcional('JWT_REFRESH_EXPIRA_EN', '7d'),
 
   // CORS

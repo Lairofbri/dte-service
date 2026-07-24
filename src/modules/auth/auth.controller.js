@@ -21,7 +21,7 @@ const logger = require('../../utils/logger');
 // ─────────────────────────────────────────────
 // CONSTANTES DE LA COOKIE
 // ─────────────────────────────────────────────
-const COOKIE_NOMBRE  = 'dte_refresh_token';
+const COOKIE_NOMBRE  = 'refresh_token';
 const COOKIE_OPCIONES = {
   httpOnly: true,    // JavaScript no puede leerla — inmune a XSS
   secure:   process.env.NODE_ENV === 'production', // HTTPS solo en producción

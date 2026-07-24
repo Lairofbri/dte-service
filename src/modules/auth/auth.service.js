@@ -39,16 +39,17 @@ const hashearRefreshToken = (token) =>
 
 /**
  * Generar access token JWT
- * establecimiento_id SIEMPRE del JWT — nunca del body
+ * Payload estandarizado: sub, tenant_id, rol, sucursal_id, establecimiento_id, email
  */
 const generarAccessToken = (usuario) => {
   return jwt.sign(
     {
       sub:                usuario.id,
-      email:              usuario.email,
-      rol:                usuario.rol,
-      establecimiento_id: usuario.establecimiento_id,
       tenant_id:          usuario.tenant_id,
+      rol:                usuario.rol,
+      sucursal_id:        usuario.sucursal_id || null,
+      establecimiento_id: usuario.establecimiento_id || null,
+      email:              usuario.email,
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRA_EN }
@@ -58,8 +59,9 @@ const generarAccessToken = (usuario) => {
 /**
  * Generar refresh token y guardarlo hasheado con SHA-256 en BD
  * El token raw va al cliente — el hash SHA-256 va a la BD
+ * tenant_id se incluye para multi-tenant scoped refresh
  */
-const generarRefreshToken = async (usuarioId) => {
+const generarRefreshToken = async (usuarioId, tenantId) => {
   const tokenRaw  = crypto.randomBytes(64).toString('hex');
   const tokenHash = hashearRefreshToken(tokenRaw);
 
@@ -68,9 +70,9 @@ const generarRefreshToken = async (usuarioId) => {
   expiraEn.setDate(expiraEn.getDate() + diasExpiracion);
 
   await query(
-    `INSERT INTO refresh_tokens (usuario_id, token_hash, expira_en)
-     VALUES ($1, $2, $3)`,
-    [usuarioId, tokenHash, expiraEn.toISOString()]
+    `INSERT INTO refresh_tokens (usuario_id, token_hash, activo, expira_en, tenant_id)
+     VALUES ($1, $2, TRUE, $3, $4)`,
+    [usuarioId, tokenHash, expiraEn.toISOString(), tenantId]
   );
 
   return { tokenRaw, expiraEn };
@@ -130,7 +132,7 @@ const login = async ({ email, password, tenant_id }) => {
   }
 
   const accessToken            = generarAccessToken(usuario);
-  const { tokenRaw, expiraEn } = await generarRefreshToken(usuario.id);
+  const { tokenRaw, expiraEn } = await generarRefreshToken(usuario.id, usuario.tenant_id);
 
   await usuariosService.registrarLoginExitoso({ id: usuario.id });
 
@@ -162,7 +164,10 @@ const login = async ({ email, password, tenant_id }) => {
 
 /**
  * Renovar access token usando refresh token
- * Fix CUBIC: búsqueda O(1) por hash SHA-256
+ * Rotación con reuse detection:
+ * - Si el token está activo → rotar (marcar inactivo + generar nuevo)
+ * - Si el token ya fue rotado (activo = FALSE) → REUSE DETECTED
+ *   → Revocar TODAS las sesiones del usuario
  */
 const refresh = async ({ refreshToken }) => {
   const tokenHash = hashearRefreshToken(refreshToken);
@@ -170,6 +175,7 @@ const refresh = async ({ refreshToken }) => {
   const { rows } = await query(
     `SELECT
        rt.id,
+       rt.activo,
        rt.expira_en,
        u.id               AS u_id,
        u.nombre,
@@ -177,16 +183,14 @@ const refresh = async ({ refreshToken }) => {
        u.rol,
        u.establecimiento_id,
        u.tenant_id,
-       u.activo,
+       u.activo           AS usuario_activo,
        u.bloqueado_hasta,
        e.nombre           AS establecimiento_nombre,
        e.cod_estable_mh   AS establecimiento_cod
      FROM refresh_tokens rt
      INNER JOIN usuarios        u ON u.id  = rt.usuario_id
-     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     WHERE rt.token_hash = $1
-       AND rt.expira_en  > NOW()
-       AND u.activo      = TRUE`,
+     LEFT JOIN establecimientos e ON e.id = u.establecimiento_id
+     WHERE rt.token_hash = $1`,
     [tokenHash]
   );
 
@@ -196,10 +200,46 @@ const refresh = async ({ refreshToken }) => {
 
   const t = rows[0];
 
+  // ── REUSE DETECTION ──
+  if (!t.activo) {
+    // Este token ya fue rotado — alguien está reutilizando un token viejo
+    // Posible robo de token → revocar TODAS las sesiones del usuario
+    logger.warn('REUSE DETECTED — token ya rotado', {
+      usuario_id: t.u_id,
+      token_id:   t.id,
+    });
+
+    await query(
+      'UPDATE refresh_tokens SET activo = FALSE WHERE usuario_id = $1',
+      [t.u_id]
+    );
+
+    throw { status: 401, mensaje: 'Sesión revocada por posible robo de token.' };
+  }
+
+  if (t.expira_en <= new Date()) {
+    await query(
+      'UPDATE refresh_tokens SET activo = FALSE WHERE id = $1',
+      [t.id]
+    );
+    throw { status: 401, mensaje: 'Refresh token expirado.' };
+  }
+
   if (t.bloqueado_hasta && new Date(t.bloqueado_hasta) > new Date()) {
     throw { status: 401, mensaje: 'Usuario bloqueado. Inicia sesión nuevamente.' };
   }
 
+  if (!t.usuario_activo) {
+    throw { status: 401, mensaje: 'Usuario desactivado.' };
+  }
+
+  // Rotación: marcar token actual como inactivo
+  await query(
+    'UPDATE refresh_tokens SET activo = FALSE WHERE id = $1',
+    [t.id]
+  );
+
+  // Generar nuevo par de tokens
   const accessToken = generarAccessToken({
     id:                 t.u_id,
     email:              t.email,
@@ -207,26 +247,28 @@ const refresh = async ({ refreshToken }) => {
     establecimiento_id: t.establecimiento_id,
     tenant_id:          t.tenant_id,
   });
+  const { tokenRaw: nuevoRefreshTokenRaw, expiraEn } = await generarRefreshToken(t.u_id, t.tenant_id);
 
   logger.info('Access token renovado', { usuario_id: t.u_id });
 
   return {
-    access_token: accessToken,
-    token_type:   'Bearer',
-    expira_en:    JWT_EXPIRA_EN,
+    access_token:  accessToken,
+    refresh_token: nuevoRefreshTokenRaw,
+    token_type:    'Bearer',
+    expira_en:     JWT_EXPIRA_EN,
   };
 };
 
 /**
  * Logout — revocar refresh token
- * Fix CUBIC: DELETE directo por hash SHA-256 → O(1)
+ * Soft-delete: marca como inactivo en vez de borrar (permite reuse detection)
  * Idempotente — no falla si el token no existe
  */
 const logout = async ({ refreshToken }) => {
   const tokenHash = hashearRefreshToken(refreshToken);
 
   await query(
-    'DELETE FROM refresh_tokens WHERE token_hash = $1',
+    'UPDATE refresh_tokens SET activo = FALSE WHERE token_hash = $1',
     [tokenHash]
   );
 

@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "migrate": "node src/migrations/run.js"
+    "migrate": "node src/migrations/run.js",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -26,6 +29,7 @@
     "winston": "^3.13.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "nodemon": "^3.1.4"
   },
   "engines": {

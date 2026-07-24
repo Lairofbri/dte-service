@@ -36,8 +36,8 @@ app.use(helmet({
 
 // ─────────────────────────────────────────────
 // HEALTH CHECK — antes de CORS, rate limit y auth
-// Railway lo usa para verificar que el servicio está vivo
-// Debe ir ANTES de CORS porque Railway no envía header Origin
+// Docker lo usa para verificar que el servicio está vivo
+// Debe ir ANTES de CORS
 // ─────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.status(200).json({
