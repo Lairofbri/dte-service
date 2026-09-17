@@ -76,6 +76,7 @@ const consultarEstado = async (req, res) => {
     const estado = await service.consultarDTE({
       codigoGeneracion,
       tipoDte: tipo_dte,
+      tenant_id: req.tenantId || null,
     });
 
     return exito(res, {

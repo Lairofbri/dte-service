@@ -41,19 +41,20 @@ const formatearEstablecimiento = (row) => ({
  * Incluye conteo de DTEs por establecimiento para información
  */
 const listarEstablecimientos = async ({ soloActivos = false, tenant_id } = {}) => {
-  const condiciones = [];
-  const valores = [];
-  let idx = 1;
-
-  if (tenant_id) {
-    condiciones.push(`e.tenant_id = $${idx++}`);
-    valores.push(tenant_id);
+  // Fase 2: el tenant es obligatorio — no existe listado global.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para listar establecimientos.' };
   }
+
+  const condiciones = [`e.tenant_id = $1`];
+  const valores = [tenant_id];
+  let idx = 2;
+
   if (soloActivos) {
-    condiciones.push('e.activo = TRUE');
+    condiciones.push(`e.activo = TRUE`);
   }
 
-  const where = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
+  const where = `WHERE ${condiciones.join(' AND ')}`;
 
   const { rows } = await query(
     `SELECT
@@ -73,7 +74,7 @@ const listarEstablecimientos = async ({ soloActivos = false, tenant_id } = {}) =
        e.actualizado_en,
        COUNT(d.id) AS total_dtes
      FROM establecimientos e
-     LEFT JOIN dtes d ON d.establecimiento_id = e.id
+     LEFT JOIN dtes d ON d.establecimiento_id = e.id AND d.tenant_id = e.tenant_id
      ${where}
      GROUP BY e.id
      ORDER BY e.activo DESC, e.nombre ASC`,
@@ -88,9 +89,12 @@ const listarEstablecimientos = async ({ soloActivos = false, tenant_id } = {}) =
  * Valida que existe antes de retornar
  */
 const obtenerEstablecimiento = async ({ id, tenant_id }) => {
-  let queryText, params;
-  if (tenant_id) {
-    queryText = `SELECT
+  // Fase 2: el tenant es obligatorio — sin consultas globales.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener un establecimiento.' };
+  }
+
+  const queryText = `SELECT
        e.id,
        e.cod_estable_mh,
        e.cod_punto_venta_mh,
@@ -107,33 +111,10 @@ const obtenerEstablecimiento = async ({ id, tenant_id }) => {
        e.actualizado_en,
        COUNT(d.id) AS total_dtes
      FROM establecimientos e
-     LEFT JOIN dtes d ON d.establecimiento_id = e.id
+     LEFT JOIN dtes d ON d.establecimiento_id = e.id AND d.tenant_id = e.tenant_id
      WHERE e.id = $1 AND e.tenant_id = $2
      GROUP BY e.id`;
-    params = [id, tenant_id];
-  } else {
-    queryText = `SELECT
-       e.id,
-       e.cod_estable_mh,
-       e.cod_punto_venta_mh,
-       e.cod_estable,
-       e.cod_punto_venta,
-       e.nombre,
-       e.direccion,
-       e.departamento_cod,
-       e.municipio_cod,
-       e.telefono,
-       e.email,
-       e.activo,
-       e.creado_en,
-       e.actualizado_en,
-       COUNT(d.id) AS total_dtes
-     FROM establecimientos e
-     LEFT JOIN dtes d ON d.establecimiento_id = e.id
-     WHERE e.id = $1
-     GROUP BY e.id`;
-    params = [id];
-  }
+  const params = [id, tenant_id];
 
   const { rows } = await query(queryText, params);
 
@@ -150,6 +131,10 @@ const obtenerEstablecimiento = async ({ id, tenant_id }) => {
  * para todos los tipos de DTE en ambos ambientes
  */
 const crearEstablecimiento = async ({ datos, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para crear un establecimiento.' };
+  }
+
   const {
     cod_estable_mh, cod_punto_venta_mh,
     cod_estable, cod_punto_venta,
@@ -158,11 +143,11 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
     telefono, email,
   } = datos;
 
-  // Verificar que la combinación cod_estable_mh + cod_punto_venta_mh no existe ya
-  // Una sucursal puede tener varias cajas — la combinación debe ser única
+  // Verificar que la combinación cod_estable_mh + cod_punto_venta_mh
+  // no existe YA dentro del mismo tenant. Fase 2: duplicidad tenant-scoped.
   const { rows: existe } = await query(
-    'SELECT id FROM establecimientos WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2',
-    [cod_estable_mh, cod_punto_venta_mh]
+    'SELECT id FROM establecimientos WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2 AND tenant_id = $3',
+    [cod_estable_mh, cod_punto_venta_mh, tenant_id]
   );
   if (existe.length > 0) {
     throw {
@@ -181,18 +166,15 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
       'nombre', 'direccion',
       'departamento_cod', 'municipio_cod',
       'telefono', 'email',
+      'tenant_id',
     ];
     const valoresEst = [
       cod_estable_mh, cod_punto_venta_mh,
       cod_estable || cod_estable_mh, cod_punto_venta || cod_punto_venta_mh,
       nombre, direccion, departamento_cod, municipio_cod,
       telefono || null, email || null,
+      tenant_id,
     ];
-
-    if (tenant_id) {
-      camposEst.push('tenant_id');
-      valoresEst.push(tenant_id);
-    }
 
     const phEst = valoresEst.map((_, i) => `$${i + 1}`).join(',');
     const { rows } = await client.query(
@@ -212,16 +194,17 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
 
     // Inicializar correlativos para todos los tipos de DTE
     // en ambos ambientes — cada sucursal tiene su propio correlativo
+    // Fase 2: los correlativos se crean con el tenant del establecimiento.
     const tiposDTE  = ['01', '03', '04', '05', '06', '07', '08', '09', '11', '14', '15'];
     const ambientes = ['00', '01'];
 
     for (const tipoDte of tiposDTE) {
       for (const ambiente of ambientes) {
         await client.query(
-          `INSERT INTO correlativos (tipo_dte, ambiente, establecimiento_id)
-           VALUES ($1, $2, $3)
+          `INSERT INTO correlativos (tenant_id, tipo_dte, ambiente, establecimiento_id)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT DO NOTHING`,
-          [tipoDte, ambiente, establecimientoId]
+          [tenant_id, tipoDte, ambiente, establecimientoId]
         );
       }
     }
@@ -255,8 +238,8 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
   // Si intenta cambiar cod_estable_mh — verificar que no tiene DTEs
   if (datos.cod_estable_mh) {
     const { rows: dtesExistentes } = await query(
-      'SELECT COUNT(*) AS total FROM dtes WHERE establecimiento_id = $1',
-      [id]
+      'SELECT COUNT(*) AS total FROM dtes WHERE establecimiento_id = $1 AND tenant_id = $2',
+      [id, tenant_id]
     );
 
     if (parseInt(dtesExistentes[0].total, 10) > 0) {
@@ -266,10 +249,10 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
       };
     }
 
-    // Verificar que el nuevo cod_estable_mh no existe en otro establecimiento
+    // Verificar que el nuevo cod_estable_mh no existe en otro establecimiento del mismo tenant
     const { rows: existeOtro } = await query(
-      'SELECT id FROM establecimientos WHERE cod_estable_mh = $1 AND id != $2',
-      [datos.cod_estable_mh, id]
+      'SELECT id FROM establecimientos WHERE cod_estable_mh = $1 AND id != $2 AND tenant_id = $3',
+      [datos.cod_estable_mh, id, tenant_id]
     );
     if (existeOtro.length > 0) {
       throw {
@@ -306,13 +289,9 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
   }
 
   valores.push(id);
+  valores.push(tenant_id);
 
-  let whereEst = `WHERE id = $${idx}`;
-  if (tenant_id) {
-    idx++;
-    whereEst += ` AND tenant_id = $${idx}`;
-    valores.push(tenant_id);
-  }
+  const whereEst = `WHERE id = $${idx} AND tenant_id = $${idx + 1}`;
 
   const { rows } = await query(
     `UPDATE establecimientos
@@ -350,13 +329,14 @@ const desactivarEstablecimiento = async ({ id, tenant_id }) => {
     };
   }
 
-  // Verificar que no tiene DTEs pendientes (en proceso)
+  // Verificar que no tiene DTEs pendientes (en proceso) — acotado al tenant
   const { rows: dtesPendientes } = await query(
     `SELECT COUNT(*) AS total
      FROM dtes
      WHERE establecimiento_id = $1
+       AND tenant_id = $2
        AND estado IN ('generado', 'firmado', 'transmitido', 'contingencia')`,
-    [id]
+    [id, tenant_id]
   );
 
   if (parseInt(dtesPendientes[0].total, 10) > 0) {
@@ -368,8 +348,8 @@ const desactivarEstablecimiento = async ({ id, tenant_id }) => {
 
   // Soft delete — UPDATE activo = FALSE, nunca DELETE real
   await query(
-    'UPDATE establecimientos SET activo = FALSE WHERE id = $1',
-    [id]
+    'UPDATE establecimientos SET activo = FALSE WHERE id = $1 AND tenant_id = $2',
+    [id, tenant_id]
   );
 
   logger.info('Establecimiento desactivado', { id });

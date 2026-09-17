@@ -28,6 +28,10 @@ const logger = require('../../utils/logger');
 // ─────────────────────────────────────────────
 // Helper: manejo de errores
 // ─────────────────────────────────────────────
+// Tenant autenticado — nunca se acepta del body.
+const obtenerTenantAutenticado = (req) =>
+  req.tenantId || req.usuario?.tenant_id || null;
+
 const manejarError = (res, err) => {
   if (err.status && err.mensaje) {
     // Incluir detalles de Hacienda si existen (códigos de error, observaciones)
@@ -60,6 +64,7 @@ const emitirFCF = async (req, res) => {
   const datos = {
     ...value,
     establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+    tenant_id: obtenerTenantAutenticado(req),
   };
 
   try {
@@ -82,6 +87,7 @@ const emitirCCF = async (req, res) => {
   const datos = {
     ...value,
     establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+    tenant_id: obtenerTenantAutenticado(req),
   };
 
   try {
@@ -102,7 +108,10 @@ const emitirNotaCredito = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const resultado = await service.emitirNotaCredito({ datos: value, ip: req.ip });
+    const resultado = await service.emitirNotaCredito({
+      datos: { ...value, tenant_id: obtenerTenantAutenticado(req) },
+      ip: req.ip,
+    });
     return creado(res, resultado, 'Nota de Crédito emitida exitosamente.');
   } catch (err) {
     return manejarError(res, err);
@@ -118,7 +127,10 @@ const emitirNotaDebito = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const resultado = await service.emitirNotaDebito({ datos: value, ip: req.ip });
+    const resultado = await service.emitirNotaDebito({
+      datos: { ...value, tenant_id: obtenerTenantAutenticado(req) },
+      ip: req.ip,
+    });
     return creado(res, resultado, 'Nota de Débito emitida exitosamente.');
   } catch (err) {
     return manejarError(res, err);
@@ -151,6 +163,7 @@ const emitirFSE = async (req, res) => {
     ...value,
     receptor,
     establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+    tenant_id: obtenerTenantAutenticado(req),
   };
 
   try {
@@ -176,7 +189,10 @@ const anularDTE = async (req, res) => {
   }
 
   try {
-    const resultado = await service.anularDTE({ datos: value, ip: req.ip });
+    const resultado = await service.anularDTE({
+      datos: { ...value, tenant_id: obtenerTenantAutenticado(req) },
+      ip: req.ip,
+    });
     return exito(res, resultado, 'DTE anulado exitosamente.');
   } catch (err) {
     return manejarError(res, err);

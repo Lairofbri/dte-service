@@ -87,12 +87,13 @@ const parsearErrorHacienda = (err) => {
  * El token es válido 24h en producción, 48h en pruebas
  *
  * @param {boolean} forzarRenovacion — si true, renueva aunque el token esté vigente
+ * @param {string} [tenant_id]       — tenant autenticado (evita consultas globales)
  * @returns {{ token: string, ambiente: string }}
  */
-const autenticar = async ({ forzarRenovacion = false } = {}) => {
+const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
   // Verificar si el token cacheado sigue vigente
   if (!forzarRenovacion) {
-    const tokenVigente = await configuracionService.obtenerTokenHacienda();
+    const tokenVigente = await configuracionService.obtenerTokenHacienda({ tenant_id });
     if (tokenVigente) {
       logger.info('Token de Hacienda vigente — reutilizando');
       return { token: tokenVigente, ambiente: AMBIENTE_HACIENDA };
@@ -102,7 +103,7 @@ const autenticar = async ({ forzarRenovacion = false } = {}) => {
   logger.info('Autenticando con Hacienda...', { ambiente: AMBIENTE_HACIENDA });
 
   // Obtener credenciales desencriptadas — solo para uso interno
-  const credenciales = await configuracionService.obtenerCredencialesHacienda();
+  const credenciales = await configuracionService.obtenerCredencialesHacienda({ tenant_id });
 
   try {
     // Hacienda usa application/x-www-form-urlencoded para autenticación
@@ -147,6 +148,7 @@ const autenticar = async ({ forzarRenovacion = false } = {}) => {
     await configuracionService.guardarTokenHacienda({
       token,
       expiraEn: expiraEn.toISOString(),
+      tenant_id,
     });
 
     logger.info('Autenticación con Hacienda exitosa', {
@@ -200,9 +202,10 @@ const transmitirDTE = async ({
   tipoDte,
   codigoGeneracion,
   version = 1,
+  tenant_id,
 }) => {
   // Obtener token vigente (renueva automáticamente si expiró)
-  const { token } = await autenticar();
+  const { token } = await autenticar({ tenant_id });
 
   // idEnvio: correlativo a discreción del emisor
   // Usamos timestamp para garantizar unicidad por sesión
@@ -296,7 +299,7 @@ const transmitirDTE = async ({
         });
 
         try {
-          const estadoActual = await consultarDTE({ codigoGeneracion, tipoDte });
+          const estadoActual = await consultarDTE({ codigoGeneracion, tipoDte, tenant_id });
           if (estadoActual.estado === 'PROCESADO') {
             // El DTE llegó aunque no recibimos la respuesta
             return {
@@ -345,14 +348,14 @@ const transmitirDTE = async ({
  * @param {string} codigoGeneracion — UUID del DTE
  * @param {string} tipoDte          — tipo de DTE
  */
-const consultarDTE = async ({ codigoGeneracion, tipoDte }) => {
-  const { token } = await autenticar();
+const consultarDTE = async ({ codigoGeneracion, tipoDte, tenant_id }) => {
+  const { token } = await autenticar({ tenant_id });
 
   try {
     const respuesta = await clienteHacienda.post(
       URL_CONSULTA_HACIENDA,
       {
-        nitEmisor:        (await configuracionService.obtenerConfiguracion()).nit.replace(/-/g, ''),
+        nitEmisor:        (await configuracionService.obtenerConfiguracion({ tenant_id })).nit.replace(/-/g, ''),
         tdte:             tipoDte,
         codigoGeneracion: codigoGeneracion.toUpperCase(),
       },
@@ -388,14 +391,14 @@ const consultarDTE = async ({ codigoGeneracion, tipoDte }) => {
  *
  * @param {string} documentoFirmado — JSON del evento de contingencia firmado
  */
-const notificarContingencia = async ({ documentoFirmado }) => {
-  const { token } = await autenticar();
+const notificarContingencia = async ({ documentoFirmado, tenant_id }) => {
+  const { token } = await autenticar({ tenant_id });
 
   try {
     const respuesta = await clienteHacienda.post(
       URL_CONTINGENCIA_HACIENDA,
       {
-        nit:      (await configuracionService.obtenerConfiguracion()).nit.replace(/-/g, ''),
+        nit:      (await configuracionService.obtenerConfiguracion({ tenant_id })).nit.replace(/-/g, ''),
         documento: documentoFirmado,
       },
       {
@@ -441,8 +444,8 @@ const notificarContingencia = async ({ documentoFirmado }) => {
  * @param {number} version          — versión del JSON
  * @param {number} idEnvio          — correlativo del envío
  */
-const anularDTE = async ({ documentoFirmado, version = 1 }) => {
-  const { token } = await autenticar();
+const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
+  const { token } = await autenticar({ tenant_id });
 
   const idEnvio = Date.now();
 
@@ -496,8 +499,8 @@ const anularDTE = async ({ documentoFirmado, version = 1 }) => {
  * @param {string}   nitEmisor  — NIT sin guiones
  * @param {string}   ambiente   — 00|01
  */
-const transmitirLote = async ({ documentos, nitEmisor, ambiente }) => {
-  const { token } = await autenticar();
+const transmitirLote = async ({ documentos, nitEmisor, ambiente, tenant_id }) => {
+  const { token } = await autenticar({ tenant_id });
 
   // idEnvio debe ser UUID v4 en MAYÚSCULAS según el manual de lotes
   const { v4: uuidv4 } = require('uuid');
@@ -556,8 +559,8 @@ const transmitirLote = async ({ documentos, nitEmisor, ambiente }) => {
  *
  * @param {string} codigoLote — código devuelto por Hacienda al enviar el lote
  */
-const consultarLote = async ({ codigoLote }) => {
-  const { token } = await autenticar();
+const consultarLote = async ({ codigoLote, tenant_id }) => {
+  const { token } = await autenticar({ tenant_id });
 
   // URL: /fesv/recepcion/consultadtelote/{codigoLote}
   const url = `${URL_CONSULTA_HACIENDA.replace('consultadte/', '')}consultadtelote/${codigoLote}`;

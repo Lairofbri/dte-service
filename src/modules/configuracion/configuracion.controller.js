@@ -102,7 +102,10 @@ const testHacienda = async (req, res) => {
     // Importar el servicio de Hacienda dinámicamente
     // para evitar dependencia circular
     const haciendaService = require('../hacienda/hacienda.service');
-    const resultado = await haciendaService.autenticar({ forzarRenovacion: true });
+    const resultado = await haciendaService.autenticar({
+      forzarRenovacion: true,
+      tenant_id: req.tenantId || req.usuario?.tenant_id || null,
+    });
 
     return exito(res, {
       conexion: 'exitosa',

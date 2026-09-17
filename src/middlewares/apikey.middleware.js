@@ -1,9 +1,11 @@
 const bcrypt    = require('bcryptjs');
-const { API_KEY_HASH } = require('../config/env');
 const { query }  = require('../config/database');
 const { noAutenticado } = require('../utils/response');
 const logger    = require('../utils/logger');
 
+// Fase 2 — Aislamiento multi-tenant:
+// Una API Key SOLO opera dentro del tenant al que pertenece.
+// No existe fallback global: el tenant es obligatorio en todos los ambientes.
 const autenticarApiKey = async (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   const tenantId = req.headers['x-tenant-id'];
@@ -13,42 +15,37 @@ const autenticarApiKey = async (req, res, next) => {
     return noAutenticado(res, 'Header X-API-Key requerido.');
   }
 
+  // El tenant es obligatorio SIEMPRE — nunca se acepta del body ni query.
+  if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) {
+    logger.warn('API Key sin X-Tenant-Id', { ip: req.ip, ruta: req.path });
+    return noAutenticado(res, 'Header X-Tenant-Id requerido.');
+  }
+
   try {
-    let hashValido = null;
-    let tenantEncontrado = null;
-
-    // Si hay X-Tenant-Id, buscar hash en DB
-    if (tenantId) {
-      const { rows } = await query(
-        'SELECT id, api_key_hash FROM tenants WHERE id = $1 AND activo = TRUE',
-        [tenantId]
-      );
-      if (rows.length > 0 && rows[0].api_key_hash) {
-        hashValido = rows[0].api_key_hash;
-        tenantEncontrado = rows[0].id;
-      }
+    // Buscar el hash de la API Key EXCLUSIVAMENTE dentro del tenant indicado.
+    const { rows } = await query(
+      'SELECT id, api_key_hash FROM tenants WHERE id = $1 AND activo = TRUE',
+      [tenantId]
+    );
+    if (rows.length === 0) {
+      logger.warn('Tenant no encontrado o inactivo', { ip: req.ip, ruta: req.path });
+      return noAutenticado(res, 'Tenant inválido.');
     }
 
-    // Fallback: hash del env para backward compat
-    if (!hashValido && API_KEY_HASH) {
-      hashValido = API_KEY_HASH;
-      // Sin tenant definido en este caso — el servicio opera sin scope
-    }
-
+    const hashValido = rows[0].api_key_hash;
     if (!hashValido) {
-      logger.warn('API Key sin hash válido', { ip: req.ip, ruta: req.path });
+      logger.warn('API Key sin hash configurado', { ip: req.ip, ruta: req.path });
       return noAutenticado(res, 'API Key inválida.');
     }
 
     const valida = await bcrypt.compare(apiKey, hashValido);
     if (!valida) {
-      logger.warn('API Key inválida', { ip: req.ip, ruta: req.path });
+      logger.warn('API Key inválida para el tenant', { ip: req.ip, ruta: req.path });
       return noAutenticado(res, 'API Key inválida.');
     }
 
-    if (tenantEncontrado) {
-      req.tenantId = tenantEncontrado;
-    }
+    // El tenant queda ligado a la credencial validada. Nunca del body.
+    req.tenantId = rows[0].id;
 
     next();
   } catch (err) {
