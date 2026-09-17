@@ -15,6 +15,13 @@ const autenticarJWT = (req, res, next) => {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
 
+    // Fase 2 — Aislamiento multi-tenant:
+    // El tenant se deriva EXCLUSIVAMENTE del JWT. Un token sin tenant se rechaza.
+    if (!payload.tenant_id) {
+      logger.warn('Token sin tenant_id — conexión rechazada', { ip: req.ip, ruta: req.path });
+      return noAutenticado(res, 'Token sin tenant. Inicia sesión nuevamente.');
+    }
+
     req.usuario = {
       id:                 payload.sub,
       email:              payload.email,
@@ -24,9 +31,7 @@ const autenticarJWT = (req, res, next) => {
       tenant_id:          payload.tenant_id,
     };
 
-    if (payload.tenant_id) {
-      req.tenantId = payload.tenant_id;
-    }
+    req.tenantId = payload.tenant_id;
 
     next();
   } catch (err) {
@@ -51,6 +56,22 @@ const soloAdministrador = (req, res, next) => {
   next();
 };
 
+/**
+ * Requiere un JWT válido de rol administrador.
+ * A diferencia de soloAdministrador, también exige tenant autenticado,
+ * de modo que las API Keys de integración (POS) NUNCA puedan operar
+ * rutas administrativas.
+ */
+const requiereAdministrador = (req, res, next) => {
+  if (!req.usuario || !req.usuario.tenant_id) {
+    return noAutenticado(res, 'Autenticación de administrador requerida.');
+  }
+  if (req.usuario.rol !== 'administrador') {
+    return sinPermiso(res, 'Solo los administradores pueden realizar esta acción.');
+  }
+  next();
+};
+
 const autenticarDual = async (req, res, next) => {
   const apiKey    = req.headers['x-api-key'];
   const authHeader = req.headers['authorization'];
@@ -67,8 +88,21 @@ const autenticarDual = async (req, res, next) => {
   return noAutenticado(res, 'Autenticación requerida. Usa X-API-Key o Authorization: Bearer.');
 };
 
+/**
+ * Guard de aislamiento: exige un tenant autenticado (JWT o API Key).
+ * Toda consulta fiscal debe pasar por aquí para no operar en global.
+ */
+const requiereTenant = (req, res, next) => {
+  if (!req.tenantId) {
+    return noAutenticado(res, 'Tenant autenticado requerido.');
+  }
+  next();
+};
+
 module.exports = {
   autenticarJWT,
   soloAdministrador,
+  requiereAdministrador,
   autenticarDual,
+  requiereTenant,
 };

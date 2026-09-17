@@ -28,12 +28,12 @@ const MAX_DTES_POR_LOTE = 100; // Según manual de Hacienda
 // ─────────────────────────────────────────────
 // HELPER: registrar en auditoría
 // ─────────────────────────────────────────────
-const registrarAuditoria = async (evento, detalles, ip) => {
+const registrarAuditoria = async (evento, detalles, ip, tenant_id) => {
   try {
     await query(
-      `INSERT INTO auditoria (evento, detalles, ip)
-       VALUES ($1, $2, $3)`,
-      [evento, JSON.stringify(detalles), ip || null]
+      `INSERT INTO auditoria (evento, detalles, ip, tenant_id)
+       VALUES ($1, $2, $3, $4)`,
+      [evento, JSON.stringify(detalles), ip || null, tenant_id || null]
     );
   } catch (err) {
     logger.error('Error al registrar auditoría en contingencia', {
@@ -103,7 +103,11 @@ const construirJsonContingencia = ({ config, dtes, datos }) => {
  * Obtener todos los DTEs en estado contingencia
  * Ordenados por fecha de emisión para procesarlos en orden cronológico
  */
-const obtenerDTEsEnContingencia = async () => {
+const obtenerDTEsEnContingencia = async ({ tenant_id } = {}) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar contingencias.' };
+  }
+
   const { rows } = await query(
     `SELECT
        d.id, d.tipo_dte, d.codigo_generacion, d.numero_control,
@@ -111,8 +115,9 @@ const obtenerDTEsEnContingencia = async () => {
        d.total, d.receptor_nombre,
        d.creado_en
      FROM dtes d
-     WHERE d.estado = 'contingencia'
-     ORDER BY d.fecha_emision ASC, d.hora_emision ASC`
+     WHERE d.estado = 'contingencia' AND d.tenant_id = $1
+     ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
+    [tenant_id]
   );
 
   return {
@@ -135,16 +140,23 @@ const obtenerDTEsEnContingencia = async () => {
  * @param {string} ip       — IP del cliente para auditoría
  */
 const notificarContingencia = async ({ datos, passwordPri, ip }) => {
+  // Aislamiento: el evento de contingencia se procesa por tenant autenticado.
+  const tenant_id = datos.tenant_id || null;
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para procesar la contingencia.' };
+  }
+
   try {
-    // ── PASO 1: Obtener DTEs en contingencia ──
+    // ── PASO 1: Obtener DTEs en contingencia — SOLO del tenant ──
     const { rows: dtesEnContingencia } = await query(
       `SELECT
          d.id, d.tipo_dte, d.codigo_generacion,
          d.numero_control, d.json_firmado,
          d.fecha_emision, d.ambiente
        FROM dtes d
-       WHERE d.estado = 'contingencia'
-       ORDER BY d.fecha_emision ASC, d.hora_emision ASC`
+       WHERE d.estado = 'contingencia' AND d.tenant_id = $1
+       ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
+      [tenant_id]
     );
 
     if (dtesEnContingencia.length === 0) {
@@ -158,7 +170,7 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
     });
 
     // ── PASO 2: Obtener configuración del emisor ──
-    const config = await configuracionService.obtenerConfiguracion();
+    const config = await configuracionService.obtenerConfiguracion({ tenant_id });
 
     // ── PASO 3: Construir JSON del evento de contingencia ──
     const jsonContingencia = construirJsonContingencia({
@@ -168,15 +180,17 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
     });
 
     // ── PASO 4: Firmar el evento de contingencia ──
-    // passwordPri se usa aquí y se descarta — NUNCA se almacena
+    // Credencial desde el proveedor seguro de firma (nunca en BD)
     const jsonFirmado = await firmadorService.firmarDTE({
       jsonDte:     jsonContingencia,
       passwordPri,
+      tenant_id,
     });
 
     // ── PASO 5: Notificar evento a Hacienda ──
     const resultadoNotificacion = await haciendaService.notificarContingencia({
       documentoFirmado: jsonFirmado,
+      tenant_id,
     });
 
     if (resultadoNotificacion.estado !== 'RECIBIDO') {
@@ -196,7 +210,7 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
       total_dtes:      dtesEnContingencia.length,
       tipo_contingencia: datos.tipo_contingencia,
       motivo:          datos.motivo_contingencia,
-    }, ip);
+    }, ip, tenant_id);
 
     // ── PASO 6: Enviar DTEs en lotes de máximo 100 ──
     // Dividir en lotes y procesar secuencialmente
@@ -220,6 +234,7 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
           documentos: lote.map((dte) => dte.json_firmado),
           nitEmisor:  formatearNIT(config.nit),
           ambiente:   config.ambiente,
+          tenant_id,
         });
 
         resultadosLotes.push({
@@ -233,18 +248,18 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
           numero_lote:  numLote + 1,
           codigo_lote:  resultadoLote.codigoLote,
           dtes_en_lote: lote.length,
-        }, ip);
+        }, ip, tenant_id);
 
         // Actualizar estado de DTEs del lote a 'transmitido'
-        // Usar transacción para garantizar consistencia
+        // Usar transacción para garantizar consistencia — acotado al tenant
         const client = await getClient();
         try {
           await client.query('BEGIN');
           for (const dte of lote) {
             await client.query(
               `UPDATE dtes SET estado = 'transmitido'
-               WHERE id = $1 AND estado = 'contingencia'`,
-              [dte.id]
+               WHERE id = $1 AND estado = 'contingencia' AND tenant_id = $2`,
+              [dte.id, tenant_id]
             );
           }
           await client.query('COMMIT');
@@ -303,11 +318,16 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
  *
  * @param {string} codigoLote — código devuelto por Hacienda al enviar el lote
  */
-const consultarLote = async ({ codigoLote }) => {
+const consultarLote = async ({ codigoLote, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar un lote.' };
+  }
+
   try {
-    const resultado = await haciendaService.consultarLote({ codigoLote });
+    const resultado = await haciendaService.consultarLote({ codigoLote, tenant_id });
 
     // Si el lote fue procesado, actualizar estado de DTEs en BD
+    // Siempre acotado al tenant autenticado.
     if (resultado.procesados?.length > 0) {
       const client = await getClient();
       try {
@@ -319,10 +339,12 @@ const consultarLote = async ({ codigoLote }) => {
              SET estado          = 'aceptado',
                  sello_recepcion = $1
              WHERE codigo_generacion = $2
+               AND tenant_id = $3
                AND estado IN ('transmitido', 'contingencia')`,
             [
               dte.selloRecibido,
               dte.codigoGeneracion.toLowerCase(), // BD guarda en minúsculas
+              tenant_id,
             ]
           );
         }
@@ -333,6 +355,7 @@ const consultarLote = async ({ codigoLote }) => {
              SET estado           = 'rechazado',
                  errores_hacienda = $1
              WHERE codigo_generacion = $2
+               AND tenant_id = $3
                AND estado IN ('transmitido', 'contingencia')`,
             [
               JSON.stringify({
@@ -340,6 +363,7 @@ const consultarLote = async ({ codigoLote }) => {
                 descripcion: dte.descripcionMsg,
               }),
               dte.codigoGeneracion.toLowerCase(),
+              tenant_id,
             ]
           );
         }

@@ -139,8 +139,11 @@ const numeroALetras = (monto) => {
 // ─────────────────────────────────────────────
 
 const obtenerSiguienteCorrelativo = async (
-  client, tipoDte, ambiente, establecimientoId, codEstableMH, codPuntoVentaMH
+  client, tenantId, tipoDte, ambiente, establecimientoId, codEstableMH, codPuntoVentaMH
 ) => {
+  if (!tenantId) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener correlativo.' };
+  }
   if (!/^[A-Z0-9]{4}$/.test(codEstableMH)) {
     throw { status: 400, mensaje: 'Formato inválido de código de establecimiento MH.' };
   }
@@ -148,20 +151,21 @@ const obtenerSiguienteCorrelativo = async (
     throw { status: 400, mensaje: 'Formato inválido de código de punto de venta MH.' };
   }
 
-  // Intentar obtener o crear el correlativo para este establecimiento
+  // Intentar obtener o crear el correlativo para este establecimiento DENTRO del tenant.
+  // Fase 2: el tenant forma parte de la clave del correlativo.
   const { rows: lockRows } = await client.query(
     `SELECT id FROM correlativos
-     WHERE tipo_dte = $1 AND ambiente = $2 AND establecimiento_id = $3
+     WHERE tenant_id = $1 AND tipo_dte = $2 AND ambiente = $3 AND establecimiento_id = $4
      FOR UPDATE`,
-    [tipoDte, ambiente, establecimientoId]
+    [tenantId, tipoDte, ambiente, establecimientoId]
   );
 
   if (lockRows.length === 0) {
     await client.query(
-      `INSERT INTO correlativos (tipo_dte, ambiente, establecimiento_id, ultimo_numero)
-       VALUES ($1, $2, $3, 0)
+      `INSERT INTO correlativos (tenant_id, tipo_dte, ambiente, establecimiento_id, ultimo_numero)
+       VALUES ($1, $2, $3, $4, 0)
        ON CONFLICT DO NOTHING`,
-      [tipoDte, ambiente, establecimientoId]
+      [tenantId, tipoDte, ambiente, establecimientoId]
     );
   }
 
@@ -169,9 +173,9 @@ const obtenerSiguienteCorrelativo = async (
     `UPDATE correlativos
      SET ultimo_numero  = ultimo_numero + 1,
          actualizado_en = NOW()
-     WHERE tipo_dte = $1 AND ambiente = $2 AND establecimiento_id = $3
+     WHERE tenant_id = $1 AND tipo_dte = $2 AND ambiente = $3 AND establecimiento_id = $4
      RETURNING ultimo_numero`,
-    [tipoDte, ambiente, establecimientoId]
+    [tenantId, tipoDte, ambiente, establecimientoId]
   );
 
   const correlativo   = rows[0].ultimo_numero;

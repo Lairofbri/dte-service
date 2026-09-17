@@ -91,9 +91,10 @@ const notificarContingenciaSchema = Joi.object({
   }),
 
   // ── passwordPri — contraseña del certificado para firmar el evento ──
-  // NUNCA se almacena — viene en el request y se descarta
-  password_pri: Joi.string().min(1).required().messages({
-    'any.required': 'La contraseña del certificado (password_pri) es requerida para firmar el evento.',
+  // NUNCA se almacena. Opcional: si no se envía, se obtiene del proveedor
+  // seguro de firma (nunca desde la BD).
+  password_pri: Joi.string().min(1).optional().messages({
+    'string.min': 'La contraseña del certificado no es válida.',
   }),
 }).custom((value, helpers) => {
   // Validar que la fecha no fue normalizada por JS

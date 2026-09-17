@@ -31,16 +31,23 @@ const {
 // El establecimiento del usuario determina los códigos MH del emisor
 // ─────────────────────────────────────────────
 const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
-  const config = await configuracionService.obtenerConfiguracion();
+  const tenant_id = datos.tenant_id;
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para emitir DTEs.' };
+  }
+
+  const config = await configuracionService.obtenerConfiguracion({ tenant_id });
 
   // Si no hay establecimientoId (API Key), buscar por códigos MH del body
+  // PERO siempre acotado al tenant autenticado — nunca global.
   if (!establecimientoId) {
     if (datos.cod_estable_mh && datos.cod_punto_venta_mh) {
       const { query } = require('../../config/database');
       const { rows: estRows } = await query(
         `SELECT id FROM establecimientos
-         WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2 AND activo = true`,
-        [datos.cod_estable_mh, datos.cod_punto_venta_mh]
+         WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2
+           AND tenant_id = $3 AND activo = true`,
+        [datos.cod_estable_mh, datos.cod_punto_venta_mh, tenant_id]
       );
       if (estRows.length > 0) {
         establecimientoId = estRows[0].id;
@@ -57,12 +64,12 @@ const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
     `SELECT id, nombre, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta,
             tipo_establecimiento, departamento_cod, municipio_cod, direccion, telefono, correo
      FROM establecimientos
-     WHERE id = $1 AND activo = true`,
-    [establecimientoId]
+     WHERE id = $1 AND tenant_id = $2 AND activo = true`,
+    [establecimientoId, tenant_id]
   );
 
   if (rows.length === 0) {
-    throw { status: 404, mensaje: 'Establecimiento no encontrado o inactivo.' };
+    throw { status: 404, mensaje: 'Establecimiento no encontrado o inactivo para este tenant.' };
   }
 
   return { config, establecimiento: rows[0] };
@@ -103,7 +110,7 @@ const generarFCF = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '01', config.ambiente,
+      client, datos.tenant_id, '01', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -189,7 +196,7 @@ const generarCCF = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '03', config.ambiente,
+      client, datos.tenant_id, '03', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -257,7 +264,7 @@ const generarFSE = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '14', config.ambiente,
+      client, datos.tenant_id, '14', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -328,7 +335,7 @@ const generarNotaCredito = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '05', config.ambiente,
+      client, datos.tenant_id, '05', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -401,7 +408,7 @@ const generarNotaDebito = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '06', config.ambiente,
+      client, datos.tenant_id, '06', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -469,12 +476,12 @@ const generarInvalidacion = async (datos) => {
     throw { status: 400, mensaje: 'Se requiere el motivo de invalidación.' };
   }
 
-  const config           = await configuracionService.obtenerConfiguracion();
+  const config           = await configuracionService.obtenerConfiguracion({ tenant_id: datos.tenant_id });
   const codigoGeneracion = generarCodigoGeneracion();
   const { getFechaHoraEmision } = require('./generador.utils');
   const { fecEmi: fecAnula, horEmi: horAnula } = getFechaHoraEmision();
 
-  // Obtener el establecimiento del DTE a anular
+  // Obtener el establecimiento del DTE a anular — SIEMPRE dentro del tenant autenticado
   const { query } = require('../../config/database');
   let establecimiento = null;
   try {
@@ -483,8 +490,8 @@ const generarInvalidacion = async (datos) => {
               e.tipo_establecimiento, e.telefono, e.correo
        FROM dtes d
        JOIN establecimientos e ON e.id = d.establecimiento_id
-       WHERE d.codigo_generacion = $1`,
-      [datos.codigo_generacion_a_anular.toUpperCase()]
+       WHERE d.codigo_generacion = $1 AND d.tenant_id = $2`,
+      [datos.codigo_generacion_a_anular.toUpperCase(), datos.tenant_id]
     );
     if (rows.length > 0) establecimiento = rows[0];
   } catch (_) {}

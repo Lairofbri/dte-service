@@ -5,8 +5,6 @@
 const app    = require('./app');
 const { PORT, AMBIENTE_HACIENDA } = require('./config/env');
 const { verificarConexion } = require('./config/database');
-// Leer datos del emisor de BD — única fuente de verdad
-const configuracionService = require('./modules/configuracion/configuracion.service');
 const logger = require('./utils/logger');
 
 const arrancar = async () => {
@@ -14,24 +12,10 @@ const arrancar = async () => {
     // Verificar conexión a BD antes de arrancar
     await verificarConexion();
 
-    // Intentar leer configuración del emisor de BD para el log de arranque
-    // Si no existe configuración aún — el servidor arranca igual
-    let emisorInfo = { nombre: 'Sin configurar', nit: 'Sin configurar' };
-    try {
-      const config = await configuracionService.obtenerConfiguracion();
-      emisorInfo = { nombre: config.nombre, nit: config.nit };
-    } catch (errConfig) {
-      // Solo ignorar el error 404 — configuración no existe aún
-      // El cliente debe crearla desde el frontend después del primer login
-      // Cualquier otro error (BD caída, query fallida) se loguea para diagnóstico
-      if (errConfig.status === 404) {
-        logger.info('Sin configuración de emisor — debe crearse desde el frontend.');
-      } else {
-        logger.warn('Error al leer configuración del emisor al arrancar', {
-          error: errConfig.message || errConfig.mensaje,
-        });
-      }
-    }
+    // La configuración fiscal es por tenant (multi-tenant) — no se carga
+    // configuración global al arrancar. Cada tenant resuelve la suya vía
+    // el JWT o la API Key validada.
+    const emisorInfo = { nombre: 'Por tenant', nit: 'Por tenant' };
 
     const servidor = app.listen(PORT, () => {
       logger.info('DTE Service arrancado', {

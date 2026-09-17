@@ -28,7 +28,7 @@ const logger    = require('../../utils/logger');
  * @param {number} filtros.pagina      — página actual
  * @param {number} filtros.limite      — registros por página
  */
-const listarAuditoria = async ({ filtros = {} }) => {
+const listarAuditoria = async ({ filtros = {}, tenant_id }) => {
   const {
     evento,
     dte_id,
@@ -38,10 +38,15 @@ const listarAuditoria = async ({ filtros = {} }) => {
     limite = 50,
   } = filtros;
 
+  // Fase 2: el tenant es obligatorio — no existe auditoría global.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar auditoría.' };
+  }
+
   // Construir condiciones dinámicas — alias a. en todos los campos
-  const condiciones = ['1=1'];
-  const valores     = [];
-  let idx = 1;
+  const condiciones = ['a.tenant_id = $1'];
+  const valores     = [tenant_id];
+  let idx = 2;
 
   if (evento) {
     condiciones.push(`a.evento = $${idx++}`);
@@ -67,7 +72,7 @@ const listarAuditoria = async ({ filtros = {} }) => {
   const offset = (pagina - 1) * limite;
 
   // LEFT JOIN con dtes para traer numero_control si existe
-  // Alias a. para auditoria, d. para dtes — sin excepción
+  // El join también se acota al tenant para no filtrar cruzado.
   const { rows } = await query(
     `SELECT
        a.id,
@@ -81,7 +86,7 @@ const listarAuditoria = async ({ filtros = {} }) => {
        d.tipo_dte        AS dte_tipo,
        d.estado          AS dte_estado
      FROM auditoria a
-     LEFT JOIN dtes d ON d.id = a.dte_id
+     LEFT JOIN dtes d ON d.id = a.dte_id AND d.tenant_id = a.tenant_id
      WHERE ${condiciones.join(' AND ')}
      ORDER BY a.creado_en DESC
      LIMIT $${idx++} OFFSET $${idx}`,
@@ -113,7 +118,11 @@ const listarAuditoria = async ({ filtros = {} }) => {
  *
  * @param {string} id — UUID del registro de auditoría
  */
-const obtenerRegistro = async ({ id }) => {
+const obtenerRegistro = async ({ id, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar auditoría.' };
+  }
+
   const { rows } = await query(
     `SELECT
        a.id,
@@ -128,9 +137,9 @@ const obtenerRegistro = async ({ id }) => {
        d.estado          AS dte_estado,
        d.codigo_generacion AS dte_codigo_generacion
      FROM auditoria a
-     LEFT JOIN dtes d ON d.id = a.dte_id
-     WHERE a.id = $1`,
-    [id]
+     LEFT JOIN dtes d ON d.id = a.dte_id AND d.tenant_id = a.tenant_id
+     WHERE a.id = $1 AND a.tenant_id = $2`,
+    [id, tenant_id]
   );
 
   if (rows.length === 0) {
@@ -144,36 +153,46 @@ const obtenerRegistro = async ({ id }) => {
  * Obtener resumen estadístico de la auditoría
  * Útil para dashboards — cuántos DTEs por estado, eventos recientes, etc.
  */
-const obtenerResumen = async () => {
-  // Eventos de las últimas 24 horas agrupados por tipo
+const obtenerResumen = async ({ tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar auditoría.' };
+  }
+
+  // Eventos de las últimas 24 horas agrupados por tipo — acotado al tenant
   const { rows: eventosPorTipo } = await query(
     `SELECT
        a.evento,
        COUNT(*) AS total
      FROM auditoria a
      WHERE a.creado_en >= NOW() - INTERVAL '24 hours'
+       AND a.tenant_id = $1
      GROUP BY a.evento
-     ORDER BY total DESC`
+     ORDER BY total DESC`,
+    [tenant_id]
   );
 
-  // Total de DTEs por estado
+  // Total de DTEs por estado — acotado al tenant
   const { rows: dtesPorEstado } = await query(
     `SELECT
        d.estado,
        COUNT(*) AS total
      FROM dtes d
+     WHERE d.tenant_id = $1
      GROUP BY d.estado
-     ORDER BY total DESC`
+     ORDER BY total DESC`,
+    [tenant_id]
   );
 
-  // Último registro de auditoría
+  // Último registro de auditoría — acotado al tenant
   const { rows: ultimoRegistro } = await query(
     `SELECT
        a.evento,
        a.creado_en
      FROM auditoria a
+     WHERE a.tenant_id = $1
      ORDER BY a.creado_en DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [tenant_id]
   );
 
   return {
