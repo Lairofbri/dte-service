@@ -40,7 +40,10 @@ const manejarError = (res, err) => {
  */
 const obtenerPendientes = async (req, res) => {
   try {
-    const resultado = await service.obtenerDTEsEnContingencia();
+    const resultado = await service.obtenerDTEsEnContingencia({
+      tenant_id: req.tenantId || req.usuario?.tenant_id,
+      establecimiento_id: req.establecimientoId || req.usuario?.establecimiento_id || null,
+    });
     return exito(res, resultado);
   } catch (err) {
     return manejarError(res, err);
@@ -62,7 +65,11 @@ const notificarContingencia = async (req, res) => {
 
   try {
     const resultado = await service.notificarContingencia({
-      datos,
+      datos:       {
+        ...datos,
+        tenant_id: req.tenantId || req.usuario?.tenant_id || null,
+        establecimiento_id: req.establecimientoId || req.usuario?.establecimiento_id || null,
+      },
       passwordPri: password_pri,
       ip:          req.ip,
     });
@@ -87,7 +94,11 @@ const consultarLote = async (req, res) => {
   }
 
   try {
-    const resultado = await service.consultarLote({ codigoLote });
+    const resultado = await service.consultarLote({
+      codigoLote,
+      tenant_id: req.tenantId || req.usuario?.tenant_id || null,
+      establecimiento_id: req.establecimientoId || req.usuario?.establecimiento_id || null,
+    });
     return exito(res, resultado);
   } catch (err) {
     return manejarError(res, err);

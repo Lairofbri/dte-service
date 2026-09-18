@@ -15,15 +15,16 @@ const {
   obtenerSiguienteCorrelativo,
   construirIdentificacion,
   construirEmisor,
+  construirEmisorPorTipo,
   construirReceptorFCF,
   construirReceptorCCF,
+  construirReceptorNCND,
   construirReceptorFSE,
   construirItem,
   construirItemFSE,
   construirResumen,
   construirResumenFSE,
   construirDocumentoRelacionado,
-  construirExtension,
 } = require('./generador.utils');
 
 // ─────────────────────────────────────────────
@@ -31,16 +32,23 @@ const {
 // El establecimiento del usuario determina los códigos MH del emisor
 // ─────────────────────────────────────────────
 const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
-  const config = await configuracionService.obtenerConfiguracion();
+  const tenant_id = datos.tenant_id;
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para emitir DTEs.' };
+  }
+
+  const config = await configuracionService.obtenerConfiguracion({ tenant_id });
 
   // Si no hay establecimientoId (API Key), buscar por códigos MH del body
+  // PERO siempre acotado al tenant autenticado — nunca global.
   if (!establecimientoId) {
     if (datos.cod_estable_mh && datos.cod_punto_venta_mh) {
       const { query } = require('../../config/database');
       const { rows: estRows } = await query(
         `SELECT id FROM establecimientos
-         WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2 AND activo = true`,
-        [datos.cod_estable_mh, datos.cod_punto_venta_mh]
+         WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2
+           AND tenant_id = $3 AND activo = true`,
+        [datos.cod_estable_mh, datos.cod_punto_venta_mh, tenant_id]
       );
       if (estRows.length > 0) {
         establecimientoId = estRows[0].id;
@@ -57,12 +65,12 @@ const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
     `SELECT id, nombre, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta,
             tipo_establecimiento, departamento_cod, municipio_cod, direccion, telefono, correo
      FROM establecimientos
-     WHERE id = $1 AND activo = true`,
-    [establecimientoId]
+     WHERE id = $1 AND tenant_id = $2 AND activo = true`,
+    [establecimientoId, tenant_id]
   );
 
   if (rows.length === 0) {
-    throw { status: 404, mensaje: 'Establecimiento no encontrado o inactivo.' };
+    throw { status: 404, mensaje: 'Establecimiento no encontrado o inactivo para este tenant.' };
   }
 
   return { config, establecimiento: rows[0] };
@@ -103,7 +111,7 @@ const generarFCF = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '01', config.ambiente,
+      client, datos.tenant_id, '01', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -118,16 +126,19 @@ const generarFCF = async (datos) => {
     );
 
     // Condición de operación y pagos
+    // FCF en contado (condicion 1): pagos: null como los FCF reales aceptados; crédito (2): array obligatorio
     const condicion = datos.condicion_operacion || 1;
-    const pagos     = datos.pagos || construirPagos(
-      datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, 0
-    );
+    const pagos     = condicion === 2
+      ? (datos.pagos || construirPagos(
+          datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, 0
+        ))
+      : null;
 
     // Resumen
-    const resumen = construirResumen(cuerpoDocumento, tipoDte, condicion, null);
+    const resumen = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null);
 
-    // Actualizar montoPago con el total real
-    if (pagos.length > 0 && !datos.pagos) {
+    // Actualizar montoPago con el total real (solo crédito con pagos autogenerados)
+    if (pagos && pagos.length > 0 && !datos.pagos) {
       pagos[0].montoPago = resumen.totalPagar;
     }
     resumen.pagos = pagos;
@@ -155,7 +166,6 @@ const generarFCF = async (datos) => {
       receptor,
       cuerpoDocumento,
       resumen,
-      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
@@ -189,7 +199,7 @@ const generarCCF = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '03', config.ambiente,
+      client, datos.tenant_id, '03', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -220,11 +230,10 @@ const generarCCF = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
       }),
       ...CAMPOS_RAIZ_NULL,
-      emisor:          construirEmisor(config, establecimiento),
+      emisor:          construirEmisorPorTipo(config, establecimiento, tipoDte),
       receptor:        construirReceptorCCF(datos.receptor),
       cuerpoDocumento,
       resumen,
-      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
@@ -257,7 +266,7 @@ const generarFSE = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '14', config.ambiente,
+      client, datos.tenant_id, '14', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -288,13 +297,11 @@ const generarFSE = async (datos) => {
         tipoContingencia:  datos.tipo_contingencia  || null,
         motivoContingencia: datos.motivo_contingencia || null,
       }),
-      ...CAMPOS_RAIZ_NULL,
+      apendice:        null,
       emisor:          construirEmisor(config, establecimiento),
       receptor:        construirReceptorFSE(datos.receptor),
       cuerpoDocumento,
       resumen,
-      extension: construirExtension(datos.extension || null),
-      observaciones:  datos.observaciones || null,
     };
 
     await client.query('COMMIT');
@@ -328,7 +335,7 @@ const generarNotaCredito = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '05', config.ambiente,
+      client, datos.tenant_id, '05', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -360,14 +367,13 @@ const generarNotaCredito = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
         fusion:            datos.fusion             || null,
       }),
-      ...CAMPOS_RAIZ_NULL,
       documentoRelacionado: docsRel,
-      emisor:          construirEmisor(config, establecimiento),
-      receptor:        construirReceptorCCF(datos.receptor),
-      ventaTercero:    null,
+      ventaTercero:         null,
+      apendice:             null,
+      emisor:               construirEmisorPorTipo(config, establecimiento, tipoDte),
+      receptor:              construirReceptorNCND(datos.receptor),
       cuerpoDocumento,
       resumen,
-      apendice:        null,
     };
 
     await client.query('COMMIT');
@@ -401,7 +407,7 @@ const generarNotaDebito = async (datos) => {
     await client.query('BEGIN');
 
     const { numeroControl, correlativo } = await obtenerSiguienteCorrelativo(
-      client, '06', config.ambiente,
+      client, datos.tenant_id, '06', config.ambiente,
       establecimiento.id,
       establecimiento.cod_estable_mh,
       establecimiento.cod_punto_venta_mh
@@ -433,14 +439,13 @@ const generarNotaDebito = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
         fusion:            datos.fusion             || null,
       }),
-      ...CAMPOS_RAIZ_NULL,
       documentoRelacionado: docsRel,
-      emisor:          construirEmisor(config, establecimiento),
-      receptor:        construirReceptorCCF(datos.receptor),
-      ventaTercero:    null,
+      ventaTercero:         null,
+      apendice:             null,
+      emisor:               construirEmisorPorTipo(config, establecimiento, tipoDte),
+      receptor:              construirReceptorNCND(datos.receptor),
       cuerpoDocumento,
       resumen,
-      apendice:        null,
     };
 
     await client.query('COMMIT');
@@ -469,12 +474,12 @@ const generarInvalidacion = async (datos) => {
     throw { status: 400, mensaje: 'Se requiere el motivo de invalidación.' };
   }
 
-  const config           = await configuracionService.obtenerConfiguracion();
+  const config           = await configuracionService.obtenerConfiguracion({ tenant_id: datos.tenant_id });
   const codigoGeneracion = generarCodigoGeneracion();
   const { getFechaHoraEmision } = require('./generador.utils');
   const { fecEmi: fecAnula, horEmi: horAnula } = getFechaHoraEmision();
 
-  // Obtener el establecimiento del DTE a anular
+  // Obtener el establecimiento del DTE a anular — SIEMPRE dentro del tenant autenticado
   const { query } = require('../../config/database');
   let establecimiento = null;
   try {
@@ -483,8 +488,8 @@ const generarInvalidacion = async (datos) => {
               e.tipo_establecimiento, e.telefono, e.correo
        FROM dtes d
        JOIN establecimientos e ON e.id = d.establecimiento_id
-       WHERE d.codigo_generacion = $1`,
-      [datos.codigo_generacion_a_anular.toUpperCase()]
+       WHERE d.codigo_generacion = $1 AND d.tenant_id = $2`,
+      [datos.codigo_generacion_a_anular.toUpperCase(), datos.tenant_id]
     );
     if (rows.length > 0) establecimiento = rows[0];
   } catch (_) {}

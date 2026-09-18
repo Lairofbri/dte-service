@@ -117,6 +117,7 @@ const actualizarUsuario = async (req, res) => {
     const usuario = await service.actualizarUsuario({
       id:    req.params.id,
       datos: value,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
     });
     return exito(res, usuario, 'Usuario actualizado exitosamente.');
   } catch (err) {
@@ -134,7 +135,10 @@ const desactivarUsuario = async (req, res) => {
     return error(res, 'El ID del usuario no tiene un formato UUID válido.', 400);
   }
   try {
-    await service.desactivarUsuario({ id: req.params.id });
+    await service.desactivarUsuario({
+      id: req.params.id,
+      tenant_id: req.usuario?.tenant_id || req.tenantId,
+    });
     return exito(res, null, 'Usuario desactivado exitosamente.');
   } catch (err) {
     return manejarError(res, err);

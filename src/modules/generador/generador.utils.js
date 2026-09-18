@@ -4,13 +4,14 @@
 
 const { v4: uuidv4 } = require('uuid');
 const { query }      = require('../../config/database');
+const { validarPagosContraTotal } = require('./payment.utils');
 
 // ─────────────────────────────────────────────
 // CATÁLOGOS OFICIALES
 // ─────────────────────────────────────────────
 const TIPOS_DTE = {
-  '01': { nombre: 'Factura',                       version: 2 },
-  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 4 },
+  '01': { nombre: 'Factura',                       version: 1 },
+  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 3 },
   '05': { nombre: 'Nota de Crédito',               version: 4 },
   '06': { nombre: 'Nota de Débito',                version: 4 },
   '11': { nombre: 'Factura de Exportación',        version: 3 },
@@ -85,7 +86,7 @@ const redondear2 = (num) => Math.round(num * 100) / 100;
 const redondear8 = (num) => Math.round(num * 1e8) / 1e8;
 
 const numeroALetras = (monto) => {
-  if (isNaN(monto) || monto < 0) return 'CERO 00/100 DÓLARES';
+  if (isNaN(monto) || monto < 0) return 'CERO CON 00/100 DOLARES';
 
   const entero   = Math.floor(monto);
   const centavos = Math.round((monto - entero) * 100);
@@ -131,7 +132,7 @@ const numeroALetras = (monto) => {
 
   const letras = convertir(entero);
   const cents  = `${centavos.toString().padStart(2, '0')}/100`;
-  return `${letras} ${cents} DÓLARES`;
+  return `${letras} CON ${cents} DOLARES`;
 };
 
 // ─────────────────────────────────────────────
@@ -139,8 +140,11 @@ const numeroALetras = (monto) => {
 // ─────────────────────────────────────────────
 
 const obtenerSiguienteCorrelativo = async (
-  client, tipoDte, ambiente, establecimientoId, codEstableMH, codPuntoVentaMH
+  client, tenantId, tipoDte, ambiente, establecimientoId, codEstableMH, codPuntoVentaMH
 ) => {
+  if (!tenantId) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener correlativo.' };
+  }
   if (!/^[A-Z0-9]{4}$/.test(codEstableMH)) {
     throw { status: 400, mensaje: 'Formato inválido de código de establecimiento MH.' };
   }
@@ -148,20 +152,21 @@ const obtenerSiguienteCorrelativo = async (
     throw { status: 400, mensaje: 'Formato inválido de código de punto de venta MH.' };
   }
 
-  // Intentar obtener o crear el correlativo para este establecimiento
+  // Intentar obtener o crear el correlativo para este establecimiento DENTRO del tenant.
+  // Fase 2: el tenant forma parte de la clave del correlativo.
   const { rows: lockRows } = await client.query(
     `SELECT id FROM correlativos
-     WHERE tipo_dte = $1 AND ambiente = $2 AND establecimiento_id = $3
+     WHERE tenant_id = $1 AND tipo_dte = $2 AND ambiente = $3 AND establecimiento_id = $4
      FOR UPDATE`,
-    [tipoDte, ambiente, establecimientoId]
+    [tenantId, tipoDte, ambiente, establecimientoId]
   );
 
   if (lockRows.length === 0) {
     await client.query(
-      `INSERT INTO correlativos (tipo_dte, ambiente, establecimiento_id, ultimo_numero)
-       VALUES ($1, $2, $3, 0)
+      `INSERT INTO correlativos (tenant_id, tipo_dte, ambiente, establecimiento_id, ultimo_numero)
+       VALUES ($1, $2, $3, $4, 0)
        ON CONFLICT DO NOTHING`,
-      [tipoDte, ambiente, establecimientoId]
+      [tenantId, tipoDte, ambiente, establecimientoId]
     );
   }
 
@@ -169,9 +174,9 @@ const obtenerSiguienteCorrelativo = async (
     `UPDATE correlativos
      SET ultimo_numero  = ultimo_numero + 1,
          actualizado_en = NOW()
-     WHERE tipo_dte = $1 AND ambiente = $2 AND establecimiento_id = $3
+     WHERE tenant_id = $1 AND tipo_dte = $2 AND ambiente = $3 AND establecimiento_id = $4
      RETURNING ultimo_numero`,
-    [tipoDte, ambiente, establecimientoId]
+    [tenantId, tipoDte, ambiente, establecimientoId]
   );
 
   const correlativo   = rows[0].ultimo_numero;
@@ -223,16 +228,29 @@ const construirEmisor = (config, establecimiento) => ({
   codActividad:     config.codigo_actividad,
   descActividad:    config.desc_actividad   || '',
   nombreComercial:  config.nombre_comercial  || null,
+  tipoEstablecimiento: establecimiento.tipo_establecimiento || null,
   direccion: {
     departamento: establecimiento.departamento_cod || '06',
     municipio:    establecimiento.municipio_cod    || '20',
+    distrito:     establecimiento.distrito_cod      || establecimiento.municipio_cod || '20',
     complemento:  establecimiento.direccion        || config.direccion,
   },
   telefono:      formatearTelefono(establecimiento.telefono || config.telefono) || '00000000',
   correo:        establecimiento.correo || config.correo || config.email || '',
-  codEstable:    establecimiento.cod_estable      || null,
-  codPuntoVenta: establecimiento.cod_punto_venta   || null,
+  codEstable:    establecimiento.cod_estable || establecimiento.cod_estable_mh || null,
+  codPuntoVenta: establecimiento.cod_punto_venta || establecimiento.cod_punto_venta_mh || null,
+  codEstableMH:    establecimiento.cod_estable_mh      || null,
+  codPuntoVentaMH: establecimiento.cod_punto_venta_mh  || null,
 });
+
+const construirEmisorPorTipo = (config, establecimiento, tipoDte) => {
+  const emisor = construirEmisor(config, establecimiento);
+  if (tipoDte === '05' || tipoDte === '06') {
+    delete emisor.codEstable;
+    delete emisor.codPuntoVenta;
+  }
+  return emisor;
+};
 
 // ─────────────────────────────────────────────
 // SECCIÓN: RECEPTOR
@@ -240,15 +258,19 @@ const construirEmisor = (config, establecimiento) => ({
 
 // FCF: tipoDocumento + numDocumento (estructura diferente)
 const construirReceptorFCF = (receptor) => ({
-  tipoDocumento: receptor.tipo_documento || '13',
-  numDocumento:  receptor.num_documento  || null,
+  tipoDocumento: receptor.tipo_documento || '37',
+  numDocumento:  receptor.num_documento  || '000000',
   nrc:           null,
   nombre:        receptor.nombre         || null,
   codActividad:  null,
   descActividad: null,
-  direccion:     null,
-  telefono:      null,
-  correo:        null,
+  direccion:     receptor.departamento_cod ? {
+    departamento: receptor.departamento_cod,
+    municipio:    receptor.municipio_cod || '20',
+    complemento:  receptor.direccion    || '',
+  } : null,
+  telefono:      receptor.telefono || null,
+  correo:        receptor.correo   || null,
 });
 
 // CCF: nit/nrc con datos completos del receptor empresa
@@ -262,7 +284,27 @@ const construirReceptorCCF = (receptor) => ({
   direccion:      receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
     complemento:  receptor.direccion    || '',
+  } : null,
+  telefono: formatearTelefono(receptor.telefono) || null,
+  correo:   receptor.correo || null,
+});
+
+// NC y ND v4 usan tipoDocumento/numDocumento, no nit como campo raíz.
+const construirReceptorNCND = (receptor) => ({
+  tipoDocumento:   receptor.tipo_documento || '36',
+  numDocumento:    receptor.num_documento || formatearNIT(receptor.nit),
+  nrc:             formatearNRC(receptor.nrc) || null,
+  nombre:          receptor.nombre,
+  codActividad:    receptor.cod_actividad    || null,
+  descActividad:   receptor.desc_actividad   || null,
+  nombreComercial: receptor.nombre_comercial || null,
+  direccion: receptor.departamento_cod ? {
+    departamento: receptor.departamento_cod,
+    municipio:    receptor.municipio_cod || '20',
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
+    complemento:  receptor.direccion || '',
   } : null,
   telefono: formatearTelefono(receptor.telefono) || null,
   correo:   receptor.correo || null,
@@ -278,6 +320,7 @@ const construirReceptorFSE = (receptor) => ({
   direccion:     receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
     complemento:  receptor.direccion    || '',
   } : null,
   telefono: formatearTelefono(receptor.telefono) || null,
@@ -292,28 +335,29 @@ const construirItem = (item, numItem, tipoDte) => {
   const precioUni = Number(item.precio_unitario) || 0;
   const descuento = Number(item.descuento)       || 0;
 
-  const subtotalBruto = (cantidad * precioUni) - descuento;
+  const subtotalBruto = cantidad * precioUni;
+  const baseGravable  = subtotalBruto - descuento;
   let   ventaGravada  = 0;
   let   ivaItem       = null;
 
   if (tipoDte === '01') {
-    // FCF: precio incluye IVA — 8 decimales a nivel ítem
-    ventaGravada = redondear8(subtotalBruto / 1.13);
-    ivaItem      = redondear8(subtotalBruto - ventaGravada);
+    // FCF: precio incluye IVA — ventaGravada es el bruto CON IVA (como FCF reales aceptados); ivaItem desglosa el IVA de la base descontada
+    ventaGravada = redondear8(subtotalBruto);
+    ivaItem      = redondear8(baseGravable - baseGravable / 1.13);
   } else {
-    // CCF, NC, ND: precio sin IVA — 8 decimales a nivel ítem
+    // CCF, NC, ND: precio sin IVA — 8 decimales a nivel ítem; ventaGravada es el bruto completo (el descuento vive en montoDescu/resumen)
     ventaGravada = redondear8(subtotalBruto);
   }
 
   const base = {
     numItem:         numItem,
-    tipoItem:        item.tipo_item  || 2,
+    tipoItem:        item.tipo_item  || 1,
     numeroDocumento: null,
     codigo:          item.codigo     || null,
     codTributo:      null,
     descripcion:     item.descripcion || item.nombre_producto || '',
     cantidad:        cantidad,
-    uniMedida:       item.uni_medida || 59,
+    uniMedida:       item.uni_medida || 99,
     precioUni:       precioUni,
     montoDescu:      descuento,
     ventaNoSuj:      0.0,
@@ -375,6 +419,7 @@ const construirResumenFSE = (items, condicionOperacion = 1, pagos = null, observ
   const pagosFinales = pagos || [
     { codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null },
   ];
+  validarPagosContraTotal(pagosFinales, totalPagar);
 
   return {
     totalCompra,
@@ -424,11 +469,13 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
   const subTotalVentas = redondear2(totalNoSuj + totalExenta + totalGravada);
   const subTotal       = redondear2(subTotalVentas - totalDescu);
 
+  const baseIva = totalGravada - totalDescu;
+
   let ivaValor = 0;
   if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
-    ivaValor = redondear2(totalGravada * 0.13);
+    ivaValor = redondear2(baseIva * 0.13);
   } else if (tipoDte === '01') {
-    ivaValor = redondear2(totalGravada - (totalGravada / 1.13));
+    ivaValor = redondear2(baseIva - (baseIva / 1.13));
   }
 
   // CCF, NC, ND: precio sin IVA → montoTotal = subTotal + IVA
@@ -439,13 +486,14 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     : redondear2(subTotal);
   const totalPagar = montoTotalOperacion;
 
-  const tributos = (tipoDte !== '14' && ivaValor > 0) ? [
+  const tributos = (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') && ivaValor > 0 ? [
     { codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: ivaValor },
   ] : null;
 
   const pagosFinales = pagos || [
     { codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null },
   ];
+  validarPagosContraTotal(pagosFinales, totalPagar);
 
   const resumen = {
     totalNoSuj:         redondear2(totalNoSuj),
@@ -459,8 +507,6 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     totalDescu,
     tributos,
     subTotal,
-    ivaPerci:           0.0,
-    ivaRete:            0.0,
     reteRenta:          0.0,
     montoTotalOperacion,
     totalNoGravado:     0.0,
@@ -472,6 +518,13 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     observaciones,
   };
 
+  if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
+    resumen.ivaPerci1 = 0.0;
+    resumen.ivaRete1 = 0.0;
+  } else if (tipoDte === '01') {
+    resumen.ivaRete1 = 0.0;
+  }
+
   if (tipoDte === '01' || tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
     resumen.totalIva = ivaValor;
   }
@@ -481,8 +534,17 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
   }
 
   if (tipoDte === '05' || tipoDte === '06') {
+    delete resumen.descuNoSuj;
+    delete resumen.descuExenta;
+    delete resumen.descuGravada;
+    delete resumen.porcentajeDescuento;
+    delete resumen.subTotal;
+    delete resumen.saldoFavor;
+    delete resumen.pagos;
     resumen.codigoRetencionMH = null;
   }
+
+  if (tipoDte === '01') delete resumen.ivaPerci;
 
   return resumen;
 };
@@ -515,8 +577,10 @@ module.exports = {
   obtenerSiguienteCorrelativo,
   construirIdentificacion,
   construirEmisor,
+  construirEmisorPorTipo,
   construirReceptorFCF,
   construirReceptorCCF,
+  construirReceptorNCND,
   construirReceptorFSE,
   construirItem,
   construirItemFSE,

@@ -102,8 +102,13 @@ const camposPagoComunes = {
   pagos:                Joi.array().items(pagoSchema).min(1).max(10).optional().allow(null),
   // Varios
   orden_referencia:     Joi.string().max(100).optional().allow('', null),
-  password_pri:         Joi.string().min(1).required().messages({
-    'any.required': 'La contraseña del certificado (password_pri) es requerida.',
+  // Fase 3 — clave idempotente (tenant + orden + tipo). Los reintentos
+  // reutilizan el mismo DTE en lugar de generar un nuevo correlativo.
+  idempotency_key:      Joi.string().max(100).optional().allow('', null),
+  // Opcional: si no se envía, la credencial se obtiene del proveedor seguro
+  // de firma (nunca desde la BD). El POS no debe enviarla.
+  password_pri:         Joi.string().min(1).optional().messages({
+    'string.min': 'La contraseña del certificado no es válida.',
   }),
   es_contingencia:      Joi.boolean().optional().default(false),
   tipo_contingencia:    Joi.number().integer().valid(1, 2, 3, 4, 5).optional().allow(null),
@@ -198,8 +203,9 @@ const anularDTESchema = Joi.object({
   nombre_solicita:      Joi.string().min(1).max(100).optional().allow('', null),
   tipo_doc_solicita:    Joi.string().valid('13', '02', '03', '36', '37').optional().allow(null),
   num_doc_solicita:     Joi.string().min(3).max(25).optional().allow('', null),
-  password_pri:         Joi.string().min(1).required().messages({
-    'any.required': 'La contraseña del certificado (password_pri) es requerida.',
+  // Opcional: se obtiene del proveedor seguro de firma si no se envía.
+  password_pri:         Joi.string().min(1).optional().messages({
+    'string.min': 'La contraseña del certificado no es válida.',
   }),
 });
 

@@ -17,7 +17,9 @@ const {
 // NIT se lee de la BD — la única fuente de verdad del emisor
 // No del env — permite vender a múltiples clientes sin cambiar variables
 const configuracionService = require('../configuracion/configuracion.service');
+const { obtenerPasswordFirma } = require('./credenciales.service');
 const logger = require('../../utils/logger');
+const { esJwt } = require('../integracion/integracion.utils');
 
 // ─────────────────────────────────────────────
 // CLIENTE HTTP con timeout estricto
@@ -38,21 +40,21 @@ const clienteFirmador = axios.create({
  * Firma un JSON DTE usando el firmador de Hacienda
  *
  * @param {object} jsonDte     — JSON del DTE construido por el generador
- * @param {string} passwordPri — contraseña de la llave privada del certificado
- *                               NUNCA se almacena — viene en cada request
+ * @param {string} [passwordPri] — contraseña de la llave privada del certificado.
+ *                                 Opcional: si no se provee, se obtiene del
+ *                                 proveedor de credenciales (nunca de BD).
+ * @param {string} [tenant_id]    — tenant para el que se firma (secreto por tenant)
  * @returns {string}           — JWT firmado listo para transmitir a Hacienda
  */
-const firmarDTE = async ({ jsonDte, passwordPri }) => {
-  // Validar que el passwordPri fue provisto
+const firmarDTE = async ({ jsonDte, passwordPri, tenant_id }) => {
+  // La credencial se obtiene del proveedor seguro si no viene en el request.
+  // NUNCA se persiste. Solo vive durante la operación de firma.
   if (!passwordPri) {
-    throw {
-      status:  400,
-      mensaje: 'La contraseña de la llave privada (passwordPri) es requerida para firmar.',
-    };
+    passwordPri = obtenerPasswordFirma({ tenant_id });
   }
 
   // Obtener NIT de la BD — única fuente de verdad del emisor
-  const config = await configuracionService.obtenerConfiguracion();
+  const config = await configuracionService.obtenerConfiguracion({ tenant_id });
   const nitSinGuiones = config.nit.replace(/-/g, '');
 
   logger.info('Enviando DTE al firmador', {
@@ -89,6 +91,16 @@ const firmarDTE = async ({ jsonDte, passwordPri }) => {
 
     // El firmador devuelve el JWT firmado en data.body
     const jwtFirmado = data.body;
+    if (!esJwt(jwtFirmado)) {
+      logger.error('El firmador devolvió un documento firmado con formato inválido', {
+        tipo: jsonDte?.identificacion?.tipoDte,
+        control: jsonDte?.identificacion?.numeroControl,
+      });
+      throw {
+        status: 502,
+        mensaje: 'El firmador devolvió una respuesta de firma inválida.',
+      };
+    }
 
     logger.info('DTE firmado exitosamente', {
       tipo:    jsonDte?.identificacion?.tipoDte,

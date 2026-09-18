@@ -65,7 +65,10 @@ const listarAuditoria = async (req, res) => {
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
   try {
-    const resultado = await service.listarAuditoria({ filtros });
+    const resultado = await service.listarAuditoria({
+      filtros,
+      tenant_id: req.tenantId || req.usuario?.tenant_id,
+    });
     return exito(res, resultado);
   } catch (err) {
     return manejarError(res, err);
@@ -79,7 +82,9 @@ const listarAuditoria = async (req, res) => {
  */
 const obtenerResumen = async (req, res) => {
   try {
-    const resumen = await service.obtenerResumen();
+    const resumen = await service.obtenerResumen({
+      tenant_id: req.tenantId || req.usuario?.tenant_id,
+    });
     return exito(res, resumen);
   } catch (err) {
     return manejarError(res, err);
@@ -97,7 +102,10 @@ const obtenerRegistro = async (req, res) => {
   }
 
   try {
-    const registro = await service.obtenerRegistro({ id: req.params.id });
+    const registro = await service.obtenerRegistro({
+      id: req.params.id,
+      tenant_id: req.tenantId || req.usuario?.tenant_id,
+    });
     return exito(res, registro);
   } catch (err) {
     return manejarError(res, err);

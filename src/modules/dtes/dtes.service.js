@@ -14,16 +14,18 @@ const firmadorService  = require('../firmador/firmador.service');
 const haciendaService  = require('../hacienda/hacienda.service');
 const { getFechaHoraEmision } = require('../generador/generador.utils');
 const logger = require('../../utils/logger');
+const { validarDte } = require('../validacion-dte/dte-schema-validator');
+const { respuestaHaciendaAuditable } = require('../integracion/integracion.utils');
 
 // ─────────────────────────────────────────────
 // HELPER: registrar en auditoría
 // ─────────────────────────────────────────────
-const registrarAuditoria = async (evento, dteId, detalles, ip, statusHttp) => {
+const registrarAuditoria = async (evento, dteId, detalles, ip, statusHttp, tenant_id) => {
   try {
     await query(
-      `INSERT INTO auditoria (evento, dte_id, detalles, ip, status_http)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [evento, dteId || null, JSON.stringify(detalles), ip || null, statusHttp || null]
+      `INSERT INTO auditoria (evento, dte_id, detalles, ip, status_http, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [evento, dteId || null, JSON.stringify(detalles), ip || null, statusHttp || null, tenant_id || null]
     );
   } catch (err) {
     // La auditoría nunca debe bloquear el flujo principal
@@ -41,7 +43,7 @@ const guardarDTE = async ({
   totalGravado, totalIva, total,
   receptorNombre, receptorNit, receptorNrc,
   establecimientoId, condicionOperacion, clienteId,
-  tenant_id,
+  tenant_id, idempotencyKey,
 }) => {
   const camposDte = [
     'tipo_dte', 'codigo_generacion', 'numero_control', 'ambiente',
@@ -65,21 +67,19 @@ const guardarDTE = async ({
     establecimientoId || null, condicionOperacion || 1, clienteId || null,
   ];
 
-  // Obtener tenant_id del establecimiento
-  if (!tenant_id && establecimientoId) {
-    const { query: dbQuery } = require('../../config/database');
-    const { rows: estRows } = await dbQuery(
-      'SELECT tenant_id FROM establecimientos WHERE id = $1',
-      [establecimientoId]
-    );
-    if (estRows.length > 0 && estRows[0].tenant_id) {
-      tenant_id = estRows[0].tenant_id;
-    }
+  // Obtener tenant_id del establecimiento — solo como fallback defensivo.
+  // Fase 2: el tenant debe venir SIEMPRE del contexto autenticado.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para guardar el DTE.' };
   }
 
-  if (tenant_id) {
-    camposDte.push('tenant_id');
-    valoresDte.push(tenant_id);
+  camposDte.push('tenant_id');
+  valoresDte.push(tenant_id);
+
+  // Fase 3: clave idempotente por tenant — permite reutilizar el mismo DTE.
+  if (idempotencyKey) {
+    camposDte.push('idempotency_key');
+    valoresDte.push(idempotencyKey);
   }
 
   const phDte = valoresDte.map((_, i) => `$${i + 1}`).join(',');
@@ -95,10 +95,64 @@ const guardarDTE = async ({
   return rows[0];
 };
 
+const guardarItemsDTE = async ({ dteId, tenant_id, jsonDte }) => {
+  const items = jsonDte.cuerpoDocumento || jsonDte.cuerpo_documento || [];
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  for (const [indice, item] of items.entries()) {
+    await query(
+      `INSERT INTO dtes_items (
+         dte_id, tenant_id, num_item, tipo_item, codigo, descripcion,
+         cantidad, uni_medida, precio_uni, monto_descu,
+         venta_no_suj, venta_exenta, venta_gravada, tributos,
+         psv, no_gravado, iva_item
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (dte_id, num_item) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         tipo_item = EXCLUDED.tipo_item,
+         codigo = EXCLUDED.codigo,
+         descripcion = EXCLUDED.descripcion,
+         cantidad = EXCLUDED.cantidad,
+         uni_medida = EXCLUDED.uni_medida,
+         precio_uni = EXCLUDED.precio_uni,
+         monto_descu = EXCLUDED.monto_descu,
+         venta_no_suj = EXCLUDED.venta_no_suj,
+         venta_exenta = EXCLUDED.venta_exenta,
+         venta_gravada = EXCLUDED.venta_gravada,
+         tributos = EXCLUDED.tributos,
+         psv = EXCLUDED.psv,
+         no_gravado = EXCLUDED.no_gravado,
+         iva_item = EXCLUDED.iva_item`,
+      [
+        dteId,
+        tenant_id,
+        item.numItem || indice + 1,
+        item.tipoItem || 2,
+        item.codigo || null,
+        item.descripcion || item.nombre_producto || 'Item fiscal',
+        item.cantidad || 1,
+        item.uniMedida || 59,
+        item.precioUni || item.precio_unitario || 0,
+        item.montoDescu || item.descuento || 0,
+        item.ventaNoSuj || 0,
+        item.ventaExenta || 0,
+        item.ventaGravada || item.compra || 0,
+        item.tributos ? JSON.stringify(item.tributos) : null,
+        item.psv || 0,
+        item.noGravado || 0,
+        item.ivaItem || null,
+      ],
+    );
+  }
+};
+
 // ─────────────────────────────────────────────
 // HELPER: actualizar estado del DTE
 // ─────────────────────────────────────────────
-const actualizarEstadoDTE = async (codigoGeneracion, estado, datos = {}) => {
+const actualizarEstadoDTE = async (codigoGeneracion, estado, datos = {}, tenant_id) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para actualizar el DTE.' };
+  }
   await query(
     `UPDATE dtes SET
        estado          = $1,
@@ -106,7 +160,7 @@ const actualizarEstadoDTE = async (codigoGeneracion, estado, datos = {}) => {
        errores_hacienda = COALESCE($3, errores_hacienda),
        observaciones   = COALESCE($4, observaciones),
        json_firmado    = COALESCE($5, json_firmado)
-     WHERE codigo_generacion = $6`,
+     WHERE codigo_generacion = $6 AND tenant_id = $7`,
     [
       estado,
       datos.selloRecepcion  || null,
@@ -114,8 +168,68 @@ const actualizarEstadoDTE = async (codigoGeneracion, estado, datos = {}) => {
       datos.observaciones   ? JSON.stringify(datos.observaciones)  : null,
       datos.jsonFirmado     || null,
       codigoGeneracion,
+      tenant_id,
     ]
   );
+};
+
+// ─────────────────────────────────────────────
+// HELPER: buscar DTE por clave idempotente
+// Fase 3 — los reintentos reutilizan el mismo DTE.
+// ─────────────────────────────────────────────
+const buscarPorIdempotencia = async (tenant_id, idempotencyKey) => {
+  if (!tenant_id || !idempotencyKey) return null;
+  const { rows } = await query(
+    `SELECT id, tipo_dte, codigo_generacion, numero_control, estado,
+            sello_recepcion, errores_hacienda, observaciones
+     FROM dtes
+     WHERE tenant_id = $1 AND idempotency_key = $2
+     LIMIT 1`,
+    [tenant_id, idempotencyKey]
+  );
+  return rows[0] || null;
+};
+
+// ─────────────────────────────────────────────
+// HELPER: construir respuesta desde un DTE existente
+// Repetir la misma petición produce la misma respuesta fiscal.
+// ─────────────────────────────────────────────
+const construirRespuestaDesdeDte = (dte) => {
+  const base = {
+    codigo_generacion: dte.codigo_generacion,
+    numero_control:    dte.numero_control,
+    sello_recepcion:   dte.sello_recepcion || null,
+    reutilizado:       true,
+  };
+
+  if (dte.estado === 'aceptado') {
+    return {
+      ...base,
+      estado:        'aceptado',
+      observaciones: dte.observaciones || [],
+    };
+  }
+
+  if (dte.estado === 'rechazado') {
+    const errores = dte.errores_hacienda || {};
+    throw {
+      status:  422,
+      mensaje: `Hacienda rechazó el DTE: ${errores.descripcion || 'rechazo previo del documento.'}`,
+      detalles: errores,
+    };
+  }
+
+  if (dte.estado === 'anulado') {
+    return { ...base, estado: 'anulado' };
+  }
+
+  return {
+    ...base,
+    estado: dte.estado,
+    mensaje: dte.estado === 'contingencia'
+      ? 'El DTE quedó en contingencia porque Hacienda no respondió.'
+      : `El DTE ya fue registrado previamente (estado: ${dte.estado}).`,
+  };
 };
 
 // ═════════════════════════════════════════════
@@ -132,7 +246,7 @@ const actualizarEstadoDTE = async (codigoGeneracion, estado, datos = {}) => {
  * @param {string}   params.passwordPri — contraseña del certificado (NO se almacena)
  * @param {string}   params.ip         — IP del cliente para auditoría
  */
-const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
+const emitirDTE = async ({ generarFn, datos, passwordPri, tenant_id, ip, idempotencyKey }) => {
   let jsonDte        = null;
   let codigoGeneracion = null;
   let numeroControl  = null;
@@ -141,6 +255,20 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
   let dteGuardado    = null;
 
   try {
+    // ── PASO 0: Idempotencia (Fase 3) ──
+    // Si ya existe un DTE para esta clave (tenant + orden + tipo),
+    // reutilizarlo: NO se genera un nuevo UUID ni se consume correlativo.
+    if (idempotencyKey) {
+      const existente = await buscarPorIdempotencia(tenant_id, idempotencyKey);
+      if (existente) {
+        logger.info('DTE reutilizado por clave idempotente', {
+          idempotencyKey,
+          estado: existente.estado,
+        });
+        return construirRespuestaDesdeDte(existente);
+      }
+    }
+
     // ── PASO 1: Generar el JSON del DTE ──
     logger.info('Iniciando emisión de DTE', { tipo: datos.tipo_dte || 'FCF', ip });
 
@@ -151,10 +279,14 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
     tipoDte          = generado.tipoDte;
     version          = generado.version;
 
-    // Verificar idempotencia — no transmitir si ya existe
+    // Validar antes de cualquier persistencia o firma. El mismo objeto validado
+    // se entrega después al firmador para evitar divergencias fiscales.
+    validarDte(jsonDte);
+
+    // Verificar idempotencia — no transmitir si ya existe (dentro del tenant)
     const { rows: existe } = await query(
-      'SELECT id, estado FROM dtes WHERE codigo_generacion = $1',
-      [codigoGeneracion]
+      'SELECT id, estado FROM dtes WHERE codigo_generacion = $1 AND tenant_id = $2',
+      [codigoGeneracion, tenant_id]
     );
     if (existe.length > 0 && existe[0].estado === 'aceptado') {
       logger.warn('DTE ya fue transmitido y aceptado', { codigoGeneracion });
@@ -166,43 +298,63 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
 
     // ── PASO 2: Guardar en BD con estado 'generado' ──
     const resumen = jsonDte.resumen;
-    dteGuardado = await guardarDTE({
-      tipoDte,
-      codigoGeneracion,
-      numeroControl,
-      ambiente:          jsonDte.identificacion.ambiente,
-      estado:            'generado',
-      jsonDte,
-      ordenReferencia:   datos.orden_referencia  || null,
-      totalGravado:      resumen.totalGravada     || 0,
-      totalIva:          resumen.totalIva         || resumen.totalIva || 0,
-      total:             resumen.totalPagar       || resumen.totalCompra || 0,
-      receptorNombre:    jsonDte.receptor?.nombre || jsonDte.sujetoExcluido?.nombre || null,
-      receptorNit:       jsonDte.receptor?.nit    || jsonDte.receptor?.numDocumento || null,
-      receptorNrc:       jsonDte.receptor?.nrc    || null,
-      establecimientoId: datos.establecimiento_id || null,
-      condicionOperacion: resumen.condicionOperacion || 1,
-      clienteId:         datos.cliente_id         || null,
-    });
+    try {
+      dteGuardado = await guardarDTE({
+        tipoDte,
+        codigoGeneracion,
+        numeroControl,
+        ambiente:          jsonDte.identificacion.ambiente,
+        estado:            'generado',
+        jsonDte,
+        ordenReferencia:   datos.orden_referencia  || null,
+        totalGravado:      resumen.totalGravada     || 0,
+        totalIva:          resumen.totalIva         || resumen.totalIva || 0,
+        total:             resumen.totalPagar       || resumen.totalCompra || 0,
+        receptorNombre:    jsonDte.receptor?.nombre || jsonDte.sujetoExcluido?.nombre || null,
+        receptorNit:       jsonDte.receptor?.nit    || jsonDte.receptor?.numDocumento || null,
+        receptorNrc:       jsonDte.receptor?.nrc    || null,
+        establecimientoId: datos.establecimiento_id || null,
+        condicionOperacion: resumen.condicionOperacion || 1,
+        clienteId:         datos.cliente_id         || null,
+        idempotencyKey:    idempotencyKey           || null,
+      });
+    } catch (err) {
+      // Dos peticiones concurrentes con la misma clave: la restricción única
+      // impide el duplicado. Reutilizar el DTE ganador en lugar de fallar.
+      if (err.code === '23505' && idempotencyKey) {
+        const existente = await buscarPorIdempotencia(tenant_id, idempotencyKey);
+        if (existente) {
+          logger.warn('DTE duplicado detectado por clave idempotente — reutilizando registro existente', {
+            idempotencyKey,
+            estado: existente.estado,
+          });
+          return construirRespuestaDesdeDte(existente);
+        }
+      }
+      throw err;
+    }
+
+    await guardarItemsDTE({ dteId: dteGuardado.id, tenant_id, jsonDte });
 
     await registrarAuditoria('DTE_GENERADO', dteGuardado.id, {
       tipo_dte:         tipoDte,
       numero_control:   numeroControl,
       codigo_generacion: codigoGeneracion,
-    }, ip, 200);
+    }, ip, 200, tenant_id);
 
     // ── PASO 3: Firmar el DTE ──
-    // passwordPri se usa aquí y se descarta — NUNCA se almacena
+    // La credencial se resuelve en el proveedor de firma (nunca en BD).
     const jsonFirmado = await firmadorService.firmarDTE({
       jsonDte,
       passwordPri,
+      tenant_id,
     });
 
     // Actualizar estado a 'firmado'
-    await actualizarEstadoDTE(codigoGeneracion, 'firmado', { jsonFirmado });
+    await actualizarEstadoDTE(codigoGeneracion, 'firmado', { jsonFirmado }, tenant_id);
     await registrarAuditoria('DTE_FIRMADO', dteGuardado.id, {
       codigo_generacion: codigoGeneracion,
-    }, ip, 200);
+    }, ip, 200, tenant_id);
 
     // ── PASO 4: Transmitir a Hacienda ──
     const resultado = await haciendaService.transmitirDTE({
@@ -210,6 +362,7 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
       tipoDte,
       codigoGeneracion,
       version,
+      tenant_id,
     });
 
     // ── PASO 5: Procesar respuesta de Hacienda ──
@@ -217,12 +370,13 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
       await actualizarEstadoDTE(codigoGeneracion, 'aceptado', {
         selloRecepcion: resultado.sello,
         observaciones:  resultado.observaciones,
-      });
+      }, tenant_id);
 
       await registrarAuditoria('DTE_ACEPTADO', dteGuardado.id, {
         sello:         resultado.sello?.substring(0, 10) + '...',
         observaciones: resultado.observaciones?.length || 0,
-      }, ip, 200);
+        respuesta_hacienda: respuestaHaciendaAuditable(resultado),
+      }, ip, 200, tenant_id);
 
       logger.info('DTE emitido y aceptado por Hacienda', {
         tipo_dte:         tipoDte,
@@ -251,12 +405,13 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
           descripcion:  resultado.descripcion,
           observaciones: resultado.observaciones,
         },
-      });
+      }, tenant_id);
 
       await registrarAuditoria('DTE_RECHAZADO', dteGuardado.id, {
         codigo_error: resultado.codigo_error,
         descripcion:  resultado.descripcion,
-      }, ip, 422);
+        respuesta_hacienda: respuestaHaciendaAuditable(resultado),
+      }, ip, 422, tenant_id);
 
       throw {
         status:  422,
@@ -270,12 +425,12 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
 
     // Estado contingencia — Hacienda no respondió
     if (resultado.estado === 'contingencia') {
-      await actualizarEstadoDTE(codigoGeneracion, 'contingencia');
+      await actualizarEstadoDTE(codigoGeneracion, 'contingencia', {}, tenant_id);
 
       await registrarAuditoria('DTE_CONTINGENCIA', dteGuardado.id, {
         codigo_generacion: codigoGeneracion,
         razon:             resultado.descripcion,
-      }, ip, 202);
+      }, ip, 202, tenant_id);
 
       logger.warn('DTE en contingencia — Hacienda no respondió', {
         codigo_generacion: codigoGeneracion,
@@ -303,7 +458,7 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
     if (dteGuardado) {
       await registrarAuditoria('DTE_ERROR', dteGuardado.id, {
         error: err.message,
-      }, ip, 500);
+      }, ip, 500, tenant_id);
     }
 
     throw { status: 500, mensaje: 'Error interno al emitir el DTE.' };
@@ -318,51 +473,61 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, ip }) => {
 // ═════════════════════════════════════════════
 
 const emitirFCF = async ({ datos, ip }) => {
-  const { password_pri, ...datosDTE } = datos;
+  const { password_pri, idempotency_key, ...datosDTE } = datos;
   return emitirDTE({
     generarFn:   generadorService.generarFCF,
     datos:       datosDTE,
     passwordPri: password_pri,
+    idempotencyKey: idempotency_key || null,
+    tenant_id:   datosDTE.tenant_id,
     ip,
   });
 };
 
 const emitirCCF = async ({ datos, ip }) => {
-  const { password_pri, ...datosDTE } = datos;
+  const { password_pri, idempotency_key, ...datosDTE } = datos;
   return emitirDTE({
     generarFn:   generadorService.generarCCF,
     datos:       datosDTE,
     passwordPri: password_pri,
+    idempotencyKey: idempotency_key || null,
+    tenant_id:   datosDTE.tenant_id,
     ip,
   });
 };
 
 const emitirNotaCredito = async ({ datos, ip }) => {
-  const { password_pri, ...datosDTE } = datos;
+  const { password_pri, idempotency_key, ...datosDTE } = datos;
   return emitirDTE({
     generarFn:   generadorService.generarNotaCredito,
     datos:       datosDTE,
     passwordPri: password_pri,
+    idempotencyKey: idempotency_key || null,
+    tenant_id:   datosDTE.tenant_id,
     ip,
   });
 };
 
 const emitirNotaDebito = async ({ datos, ip }) => {
-  const { password_pri, ...datosDTE } = datos;
+  const { password_pri, idempotency_key, ...datosDTE } = datos;
   return emitirDTE({
     generarFn:   generadorService.generarNotaDebito,
     datos:       datosDTE,
     passwordPri: password_pri,
+    idempotencyKey: idempotency_key || null,
+    tenant_id:   datosDTE.tenant_id,
     ip,
   });
 };
 
 const emitirFSE = async ({ datos, ip }) => {
-  const { password_pri, ...datosDTE } = datos;
+  const { password_pri, idempotency_key, ...datosDTE } = datos;
   return emitirDTE({
     generarFn:   generadorService.generarFSE,
     datos:       datosDTE,
     passwordPri: password_pri,
+    idempotencyKey: idempotency_key || null,
+    tenant_id:   datosDTE.tenant_id,
     ip,
   });
 };
@@ -375,13 +540,13 @@ const emitirFSE = async ({ datos, ip }) => {
 const anularDTE = async ({ datos, ip }) => {
   const { password_pri, codigo_generacion, ...datosAnulacion } = datos;
 
-  const anularParams = [codigo_generacion.toUpperCase()];
-  let anularFiltro = '';
-
-  if (datos.tenant_id) {
-    anularFiltro = ` AND d.tenant_id = $2`;
-    anularParams.push(datos.tenant_id);
+  // Fase 2: la anulación SIEMPRE acotada al tenant autenticado.
+  if (!datos.tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para anular un DTE.' };
   }
+
+  const anularParams = [codigo_generacion.toUpperCase(), datos.tenant_id];
+  const anularFiltro = ' AND d.tenant_id = $2';
 
   const { rows } = await query(
     `SELECT d.id, d.tipo_dte, d.codigo_generacion, d.numero_control,
@@ -426,30 +591,33 @@ const anularDTE = async ({ datos, ip }) => {
       ...datosAnulacion,
     });
 
-  // Firmar el evento de invalidación
+  // Firmar el evento de invalidación — credencial desde proveedor seguro
   const jsonFirmado = await firmadorService.firmarDTE({
     jsonDte:    jsonInvalidacion,
     passwordPri: password_pri,
+    tenant_id:   datos.tenant_id,
   });
 
   // Transmitir a Hacienda
   const resultado = await haciendaService.anularDTE({
     documentoFirmado: jsonFirmado,
     version:          2,
+    tenant_id:        datos.tenant_id,
   });
 
   if (resultado.estado === 'PROCESADO') {
-    // Actualizar estado del DTE original a anulado
+    // Actualizar estado del DTE original a anulado — acotado al tenant
     await query(
-      `UPDATE dtes SET estado = 'anulado' WHERE codigo_generacion = $1`,
-      [codigo_generacion.toUpperCase()]
+      `UPDATE dtes SET estado = 'anulado'
+       WHERE codigo_generacion = $1 AND tenant_id = $2`,
+      [codigo_generacion.toUpperCase(), datos.tenant_id]
     );
 
     await registrarAuditoria('DTE_ANULADO', dte.id, {
       codigo_generacion_anulacion: codGenAnulacion,
       motivo_tipo:                 datosAnulacion.motivo_tipo,
       motivo:                      datosAnulacion.motivo_descripcion,
-    }, ip, 200);
+    }, ip, 200, datos.tenant_id);
 
     logger.info('DTE anulado exitosamente', {
       codigo_generacion_original: codigo_generacion,
@@ -478,14 +646,14 @@ const anularDTE = async ({ datos, ip }) => {
 const listarDTEs = async ({ filtros = {}, establecimientoId, tenant_id }) => {
   const { tipo_dte, estado, fecha_desde, fecha_hasta, pagina = 1, limite = 20 } = filtros;
 
-  const condiciones = ['1=1'];
-  const valores     = [];
-  let idx = 1;
-
-  if (tenant_id) {
-    condiciones.push(`d.tenant_id = $${idx++}`);
-    valores.push(tenant_id);
+  // Fase 2: el tenant es obligatorio — las consultas sin tenant fallan.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para listar DTEs.' };
   }
+
+  const condiciones = ['d.tenant_id = $1'];
+  const valores     = [tenant_id];
+  let idx = 2;
 
   if (establecimientoId) {
     condiciones.push(`d.establecimiento_id = $${idx++}`);
@@ -537,13 +705,13 @@ const listarDTEs = async ({ filtros = {}, establecimientoId, tenant_id }) => {
  *                   al establecimiento del usuario (evita cross-tenant)
  */
 const obtenerDTE = async ({ codigoGeneracion, establecimientoId, tenant_id }) => {
-  let filtrosAdicionales = '';
-  const params = [codigoGeneracion.toUpperCase()];
-
-  if (tenant_id) {
-    filtrosAdicionales += ` AND d.tenant_id = $${params.length + 1}`;
-    params.push(tenant_id);
+  // Fase 2: el tenant es obligatorio — no existe consulta global.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar un DTE.' };
   }
+
+  let filtrosAdicionales = ' AND d.tenant_id = $2';
+  const params = [codigoGeneracion.toUpperCase(), tenant_id];
 
   if (establecimientoId) {
     filtrosAdicionales += ` AND d.establecimiento_id = $${params.length + 1}`;

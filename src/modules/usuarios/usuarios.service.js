@@ -49,20 +49,20 @@ const formatearUsuario = (row) => ({
  * Alias u. para usuarios, e. para establecimientos
  */
 const listarUsuarios = async ({ soloActivos = false, tenant_id } = {}) => {
-  const condiciones = [];
-  const valores = [];
-  let idx = 1;
-
-  if (tenant_id) {
-    condiciones.push(`u.tenant_id = $${idx++}`);
-    valores.push(tenant_id);
+  // Fase 2: el tenant es obligatorio — no existe listado global de usuarios.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para listar usuarios.' };
   }
+
+  const condiciones = [`u.tenant_id = $1`];
+  const valores = [tenant_id];
+  let idx = 2;
 
   if (soloActivos) {
     condiciones.push('u.activo = TRUE');
   }
 
-  const where = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
+  const where = `WHERE ${condiciones.join(' AND ')}`;
 
   const { rows } = await query(
     `SELECT
@@ -94,10 +94,12 @@ const listarUsuarios = async ({ soloActivos = false, tenant_id } = {}) => {
  * Alias u. para usuarios, e. para establecimientos
  */
 const obtenerUsuario = async ({ id, tenant_id }) => {
-  let queryText, params;
+  // Fase 2: el tenant es obligatorio — no existe consulta global de usuarios.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener un usuario.' };
+  }
 
-  if (tenant_id) {
-    queryText = `SELECT
+  const queryText = `SELECT
        u.id,
        u.nombre,
        u.email,
@@ -114,27 +116,7 @@ const obtenerUsuario = async ({ id, tenant_id }) => {
      FROM usuarios u
      INNER JOIN establecimientos e ON e.id = u.establecimiento_id
      WHERE u.id = $1 AND u.tenant_id = $2`;
-    params = [id, tenant_id];
-  } else {
-    queryText = `SELECT
-       u.id,
-       u.nombre,
-       u.email,
-       u.rol,
-       u.establecimiento_id,
-       u.activo,
-       u.intentos_fallidos,
-       u.bloqueado_hasta,
-       u.ultimo_login,
-       u.creado_en,
-       u.actualizado_en,
-       e.nombre         AS establecimiento_nombre,
-       e.cod_estable_mh AS establecimiento_cod
-     FROM usuarios u
-     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     WHERE u.id = $1`;
-    params = [id];
-  }
+  const params = [id, tenant_id];
 
   const { rows } = await query(queryText, params);
 
@@ -151,10 +133,12 @@ const obtenerUsuario = async ({ id, tenant_id }) => {
  * NUNCA devolver al cliente HTTP
  */
 const obtenerUsuarioPorEmail = async ({ email, tenant_id }) => {
-  let queryText, params;
+  // Fase 2: el tenant es obligatorio — nunca buscar email globalmente.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para buscar un usuario.' };
+  }
 
-  if (tenant_id) {
-    queryText = `SELECT
+  const queryText = `SELECT
        u.id,
        u.nombre,
        u.email,
@@ -171,27 +155,7 @@ const obtenerUsuarioPorEmail = async ({ email, tenant_id }) => {
      FROM usuarios u
      INNER JOIN establecimientos e ON e.id = u.establecimiento_id
      WHERE u.email = $1 AND u.tenant_id = $2`;
-    params = [email.toLowerCase(), tenant_id];
-  } else {
-    queryText = `SELECT
-       u.id,
-       u.nombre,
-       u.email,
-       u.password_hash,
-       u.rol,
-       u.establecimiento_id,
-       u.tenant_id,
-       u.activo,
-       u.intentos_fallidos,
-       u.bloqueado_hasta,
-       u.ultimo_login,
-       e.nombre         AS establecimiento_nombre,
-       e.cod_estable_mh AS establecimiento_cod
-     FROM usuarios u
-     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
-     WHERE u.email = $1`;
-    params = [email.toLowerCase()];
-  }
+  const params = [email.toLowerCase(), tenant_id];
 
   const { rows } = await query(queryText, params);
 
@@ -205,29 +169,33 @@ const obtenerUsuarioPorEmail = async ({ email, tenant_id }) => {
  * Verificar email único y establecimiento activo
  */
 const crearUsuario = async ({ datos, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para crear un usuario.' };
+  }
+
   const {
     nombre, email, password,
     rol, establecimiento_id,
   } = datos;
 
-  // Verificar que el email no existe ya
+  // Verificar que el email no existe ya dentro del mismo tenant
   const { rows: emailExiste } = await query(
-    'SELECT id FROM usuarios WHERE email = $1',
-    [email.toLowerCase()]
+    'SELECT id FROM usuarios WHERE email = $1 AND tenant_id = $2',
+    [email.toLowerCase(), tenant_id]
   );
   if (emailExiste.length > 0) {
-    throw { status: 409, mensaje: 'Ya existe un usuario con ese email.' };
+    throw { status: 409, mensaje: 'Ya existe un usuario con ese email en este tenant.' };
   }
 
-  // Verificar que el establecimiento existe y está activo
+  // Verificar que el establecimiento existe, está activo Y pertenece al tenant
   const { rows: estable } = await query(
-    'SELECT id FROM establecimientos WHERE id = $1 AND activo = TRUE',
-    [establecimiento_id]
+    'SELECT id FROM establecimientos WHERE id = $1 AND activo = TRUE AND tenant_id = $2',
+    [establecimiento_id, tenant_id]
   );
   if (estable.length === 0) {
     throw {
       status:  400,
-      mensaje: 'El establecimiento no existe o está inactivo.',
+      mensaje: 'El establecimiento no existe, está inactivo o pertenece a otro tenant.',
     };
   }
 
@@ -251,7 +219,7 @@ const crearUsuario = async ({ datos, tenant_id }) => {
       password_hash,
       rol,
       establecimiento_id,
-      tenant_id || null,
+      tenant_id,
     ]
   );
 
@@ -272,9 +240,14 @@ const crearUsuario = async ({ datos, tenant_id }) => {
  * Si se cambia el rol verificar que no queda sin administradores
  * Email único verificado antes de actualizar
  */
-const actualizarUsuario = async ({ id, datos }) => {
-  // Verificar que el usuario existe
-  const usuarioActual = await obtenerUsuario({ id });
+const actualizarUsuario = async ({ id, datos, tenant_id }) => {
+  // Fase 2: el tenant es obligatorio.
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para actualizar un usuario.' };
+  }
+
+  // Verificar que el usuario existe y pertenece al tenant
+  const usuarioActual = await obtenerUsuario({ id, tenant_id });
 
   // Determinar si necesitamos protección de último administrador
   const necesitaProteccionAdmin = (
@@ -282,25 +255,25 @@ const actualizarUsuario = async ({ id, datos }) => {
     (datos.rol === 'operador' && usuarioActual.rol === 'administrador')
   );
 
-  // Si se actualiza el email verificar que no existe en otro usuario
+  // Si se actualiza el email verificar que no existe en otro usuario del mismo tenant
   if (datos.email) {
     const { rows: emailExiste } = await query(
-      'SELECT id FROM usuarios WHERE email = $1 AND id != $2',
-      [datos.email.toLowerCase(), id]
+      'SELECT id FROM usuarios WHERE email = $1 AND id != $2 AND tenant_id = $3',
+      [datos.email.toLowerCase(), id, tenant_id]
     );
     if (emailExiste.length > 0) {
-      throw { status: 409, mensaje: 'Ya existe otro usuario con ese email.' };
+      throw { status: 409, mensaje: 'Ya existe otro usuario con ese email en este tenant.' };
     }
   }
 
-  // Si se actualiza el establecimiento verificar que existe y está activo
+  // Si se actualiza el establecimiento verificar que existe, está activo y pertenece al tenant
   if (datos.establecimiento_id) {
     const { rows: estable } = await query(
-      'SELECT id FROM establecimientos WHERE id = $1 AND activo = TRUE',
-      [datos.establecimiento_id]
+      'SELECT id FROM establecimientos WHERE id = $1 AND activo = TRUE AND tenant_id = $2',
+      [datos.establecimiento_id, tenant_id]
     );
     if (estable.length === 0) {
-      throw { status: 400, mensaje: 'El establecimiento no existe o está inactivo.' };
+      throw { status: 400, mensaje: 'El establecimiento no existe, está inactivo o pertenece a otro tenant.' };
     }
   }
 
@@ -339,6 +312,7 @@ const actualizarUsuario = async ({ id, datos }) => {
   }
 
   valores.push(id);
+  valores.push(tenant_id);
 
   const client = await getClient();
   try {
@@ -352,9 +326,10 @@ const actualizarUsuario = async ({ id, datos }) => {
          FROM usuarios
          WHERE rol = 'administrador'
            AND activo = TRUE
-           AND id != $1
+           AND tenant_id = $1
+           AND id != $2
          FOR UPDATE`,
-        [id]
+        [tenant_id, id]
       );
 
       if (parseInt(admins[0].total, 10) === 0) {
@@ -369,7 +344,7 @@ const actualizarUsuario = async ({ id, datos }) => {
     const { rows } = await client.query(
       `UPDATE usuarios
        SET ${campos.join(', ')}
-       WHERE id = $${idx}
+       WHERE id = $${idx} AND tenant_id = $${idx + 1}
        RETURNING
          id, nombre, email, rol,
          establecimiento_id, activo,
@@ -404,8 +379,12 @@ const actualizarUsuario = async ({ id, datos }) => {
  * Fix CUBIC: SELECT FOR UPDATE dentro de transacción
  * para evitar race condition cuando dos admins se desactivan simultáneamente
  */
-const desactivarUsuario = async ({ id }) => {
-  const usuario = await obtenerUsuario({ id });
+const desactivarUsuario = async ({ id, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para desactivar un usuario.' };
+  }
+
+  const usuario = await obtenerUsuario({ id, tenant_id });
 
   if (!usuario.activo) {
     throw { status: 409, mensaje: 'El usuario ya está inactivo.' };
@@ -423,9 +402,10 @@ const desactivarUsuario = async ({ id }) => {
          FROM usuarios
          WHERE rol = 'administrador'
            AND activo = TRUE
-           AND id != $1
+           AND tenant_id = $1
+           AND id != $2
          FOR UPDATE`,
-        [id]
+        [tenant_id, id]
       );
 
       if (parseInt(rows[0].total, 10) === 0) {
@@ -438,8 +418,8 @@ const desactivarUsuario = async ({ id }) => {
     }
 
     await client.query(
-      'UPDATE usuarios SET activo = FALSE WHERE id = $1',
-      [id]
+      'UPDATE usuarios SET activo = FALSE WHERE id = $1 AND tenant_id = $2',
+      [id, tenant_id]
     );
 
     await client.query('COMMIT');
@@ -493,26 +473,8 @@ const registrarLoginExitoso = async ({ id }) => {
 };
 
 // ─────────────────────────────────────────────
-// HELPER INTERNO: verificar que no es el último admin
+// EXPORTS
 // ─────────────────────────────────────────────
-const verificarUltimoAdmin = async (idExcluir) => {
-  const { rows } = await query(
-    `SELECT COUNT(*) AS total
-     FROM usuarios
-     WHERE rol = 'administrador'
-       AND activo = TRUE
-       AND id != $1`,
-    [idExcluir]
-  );
-
-  if (parseInt(rows[0].total, 10) === 0) {
-    throw {
-      status:  409,
-      mensaje: 'No se puede realizar esta operación porque quedaría el sistema sin administradores activos.',
-    };
-  }
-};
-
 module.exports = {
   listarUsuarios,
   obtenerUsuario,

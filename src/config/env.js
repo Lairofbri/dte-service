@@ -39,9 +39,19 @@ module.exports = {
   // este servicio la compara contra el hash. Opcional: si no está en env,
   // se obtiene de la tabla tenants (multi-tenant).
   API_KEY_HASH:    opcional('API_KEY_HASH'),
-  // Clave AES-256 para encriptar credenciales sensibles en BD
-  // Opcional: si no está en env, se obtiene de la tabla tenants.
-  ENCRYPTION_KEY:  opcional('ENCRYPTION_KEY'),
+  // Clave para cifrar credenciales sensibles en BD (AES-256-GCM vía scrypt).
+  // OBLIGATORIA: sin ella el servicio no arranca (fail-fast).
+  // Mínimo 32 caracteres para garantizar una clave fuerte.
+  ENCRYPTION_KEY: (() => {
+    const clave = requerida('ENCRYPTION_KEY');
+    if (clave.length < 32) {
+      throw new Error(
+        '[DTE-SERVICE] ENCRYPTION_KEY debe tener al menos 32 caracteres.\n' +
+        'Genera una con: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"'
+      );
+    }
+    return clave;
+  })(),
 
   // ── Hacienda — solo URLs e infraestructura ──
   // Los datos del emisor (NIT, nombre, credenciales) viven en la BD
@@ -60,6 +70,10 @@ module.exports = {
   // ── Firmador ──
   URL_FIRMADOR:     requerida('URL_FIRMADOR'),
   TIMEOUT_FIRMADOR: opcionalInt('TIMEOUT_FIRMADOR', 10000),
+  // Contraseña de la llave privada del certificado de firma.
+  // NUNCA se persiste en BD. Se inyecta en runtime (env o Secret Manager).
+  // Se lee exclusivamente dentro de la operación de firma.
+  FIRMADOR_PASSWORD_PRI: opcional('FIRMADOR_PASSWORD_PRI'),
 
   // ── S3/R2 ──
   S3_ENDPOINT:   opcional('S3_ENDPOINT'),

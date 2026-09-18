@@ -1,0 +1,87 @@
+{
+  "identificacion": {
+    "version": 2,
+    "ambiente": "00",
+    "tipoDte": "14",
+    "numeroControl": "DTE-14-M001P001-000000000000001",
+    "codigoGeneracion": "11111111-2222-4333-8444-555555555555",
+    "tipoModelo": 1,
+    "tipoOperacion": 1,
+    "tipoContingencia": 1,
+    "motivoContin": "PRUEBA",
+    "fecEmi": "2026-01-15",
+    "horEmi": "10:30:00",
+    "tipoMoneda": "USD"
+  },
+  "emisor": {
+    "nit": "06140101001010",
+    "nrc": "1234567",
+    "nombre": "Contribuyente de Prueba",
+    "codActividad": "471100",
+    "descActividad": "Venta de productos de prueba",
+    "direccion": {
+      "departamento": "06",
+      "municipio": "20",
+      "distrito": "20",
+      "complemento": "PRUEBA"
+    },
+    "telefono": "22223333",
+    "codEstable": "M001",
+    "codPuntoVenta": "P001",
+    "correo": "prueba@example.com"
+  },
+  "receptor": {
+    "tipoDocumento": "36",
+    "numDocumento": "06140101001010",
+    "codActividad": "471100",
+    "descActividad": "Venta de productos de prueba",
+    "direccion": {
+      "departamento": "06",
+      "municipio": "20",
+      "distrito": "20",
+      "complemento": "PRUEBA"
+    },
+    "telefono": "22223333",
+    "correo": "prueba@example.com"
+  },
+  "cuerpoDocumento": [
+    {
+      "numItem": 1,
+      "tipoItem": 0,
+      "cantidad": 1,
+      "codigo": "01",
+      "uniMedida": 1,
+      "descripcion": "Producto de prueba",
+      "precioUni": 0,
+      "montoDescu": 0,
+      "compra": 0
+    }
+  ],
+  "resumen": {
+    "totalCompra": 0,
+    "descu": 0,
+    "totalDescu": 0,
+    "subTotal": 0,
+    "reteRenta": 0,
+    "totalPagar": 0,
+    "totalLetras": "DIEZ 00/100 DOLARES",
+    "condicionOperacion": 0,
+    "pagos": [
+      {
+        "codigo": "01",
+        "montoPago": 0,
+        "referencia": "PRUEBA",
+        "plazo": "PRUEBA",
+        "periodo": 0
+      }
+    ],
+    "observaciones": "PRUEBA"
+  },
+  "apendice": [
+    {
+      "campo": "PRUEBA",
+      "etiqueta": "PRUEBA",
+      "valor": "PRUEBA"
+    }
+  ]
+}

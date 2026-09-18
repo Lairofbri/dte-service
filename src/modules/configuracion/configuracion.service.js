@@ -58,11 +58,14 @@ const formatearParaRespuesta = (row) => ({
 /**
  * Obtener la configuración actual
  * Retorna datos del emisor SIN credenciales
+ * Fase 2: el tenant es OBLIGATORIO — no existe fallback global con LIMIT 1.
  */
 const obtenerConfiguracion = async ({ tenant_id } = {}) => {
-  let queryText, params;
-  if (tenant_id) {
-    queryText = `SELECT
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener la configuración.' };
+  }
+
+  const queryText = `SELECT
        id, nit, nrc, nombre, nombre_comercial,
        direccion, telefono, email, correo,
        codigo_actividad, codigo_establecimiento,
@@ -74,22 +77,7 @@ const obtenerConfiguracion = async ({ tenant_id } = {}) => {
        activo, creado_en, actualizado_en
      FROM configuracion
      WHERE tenant_id = $1`;
-    params = [tenant_id];
-  } else {
-    queryText = `SELECT
-       id, nit, nrc, nombre, nombre_comercial,
-       direccion, telefono, email, correo,
-       codigo_actividad, codigo_establecimiento,
-       codigo_punto_venta, tipo_establecimiento,
-       ambiente,
-       departamento_cod, municipio_cod, desc_actividad,
-       usuario_hacienda, password_hacienda,
-       token_hacienda, token_expira_en,
-       activo, creado_en, actualizado_en
-     FROM configuracion
-     LIMIT 1`;
-    params = [];
-  }
+  const params = [tenant_id];
 
   const { rows } = await query(queryText, params);
 
@@ -130,34 +118,27 @@ const obtenerCredencialesHacienda = async ({ tenant_id } = {}) => {
 
 /**
  * Crear la configuración inicial
- * Solo puede existir UNA configuración por instancia
+ * Una configuración por tenant — el tenant es obligatorio.
  * Las credenciales se encriptan antes de guardar
  */
 const crearConfiguracion = async ({ datos, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para crear la configuración.' };
+  }
+
   const client = await getClient();
   try {
     await client.query('BEGIN');
 
-    let queryExiste, paramsExiste;
-    let lockTable = false;
-
-    if (tenant_id) {
-      queryExiste = 'SELECT id FROM configuracion WHERE tenant_id = $1 LIMIT 1';
-      paramsExiste = [tenant_id];
-    } else {
-      // Legacy: sin tenant_id → LOCK TABLE (single-tenant)
-      await client.query('LOCK TABLE configuracion IN EXCLUSIVE MODE');
-      queryExiste = 'SELECT id FROM configuracion LIMIT 1';
-      paramsExiste = [];
-      lockTable = true;
-    }
+    const queryExiste = 'SELECT id FROM configuracion WHERE tenant_id = $1 LIMIT 1';
+    const paramsExiste = [tenant_id];
 
     const { rows: existe } = await client.query(queryExiste, paramsExiste);
     if (existe.length > 0) {
       await client.query('ROLLBACK');
       throw {
         status: 409,
-        mensaje: 'Ya existe una configuración. Usa PATCH para actualizar.',
+        mensaje: 'Ya existe una configuración para este tenant. Usa PATCH para actualizar.',
       };
     }
 
@@ -212,10 +193,8 @@ const crearConfiguracion = async ({ datos, tenant_id }) => {
       desc_actividad || null,
     ];
 
-    if (tenant_id) {
-      camposInsert.push('tenant_id');
-      valoresInsert.push(tenant_id);
-    }
+    camposInsert.push('tenant_id');
+    valoresInsert.push(tenant_id);
 
     const placeholders = valoresInsert.map((_, i) => `$${i + 1}`).join(',');
     const camposStr = camposInsert.join(', ');
@@ -259,6 +238,9 @@ const crearConfiguracion = async ({ datos, tenant_id }) => {
  * Re-encripta las credenciales si se actualizan
  */
 const actualizarConfiguracion = async ({ datos, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para actualizar la configuración.' };
+  }
   await obtenerConfiguracion({ tenant_id });
 
   const camposPermitidos = [
@@ -307,11 +289,8 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
     throw { status: 400, mensaje: 'No hay campos válidos para actualizar.' };
   }
 
-  let whereClause = 'WHERE id = (SELECT id FROM configuracion LIMIT 1)';
-  if (tenant_id) {
-    whereClause = 'WHERE tenant_id = $' + (idx++);
-    valores.push(tenant_id);
-  }
+  let whereClause = 'WHERE tenant_id = $' + (idx++);
+  valores.push(tenant_id);
 
   const { rows } = await query(
     `UPDATE configuracion SET ${campos.join(', ')}
@@ -342,20 +321,15 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
  * El cliente NUNCA ve este token
  */
 const guardarTokenHacienda = async ({ token, expiraEn, tenant_id }) => {
-  let queryText, params;
-  if (tenant_id) {
-    queryText = `UPDATE configuracion
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para guardar el token de Hacienda.' };
+  }
+
+  const queryText = `UPDATE configuracion
      SET token_hacienda  = $1,
          token_expira_en = $2
      WHERE tenant_id = $3`;
-    params = [encriptar(token), expiraEn, tenant_id];
-  } else {
-    queryText = `UPDATE configuracion
-     SET token_hacienda  = $1,
-         token_expira_en = $2
-     WHERE id = (SELECT id FROM configuracion LIMIT 1)`;
-    params = [encriptar(token), expiraEn];
-  }
+  const params = [encriptar(token), expiraEn, tenant_id];
 
   await query(queryText, params);
 
@@ -370,18 +344,14 @@ const guardarTokenHacienda = async ({ token, expiraEn, tenant_id }) => {
  * NUNCA devolver al cliente HTTP
  */
 const obtenerTokenHacienda = async ({ tenant_id } = {}) => {
-  let queryText, params;
-  if (tenant_id) {
-    queryText = `SELECT token_hacienda, token_expira_en
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener el token de Hacienda.' };
+  }
+
+  const queryText = `SELECT token_hacienda, token_expira_en
      FROM configuracion
      WHERE tenant_id = $1`;
-    params = [tenant_id];
-  } else {
-    queryText = `SELECT token_hacienda, token_expira_en
-     FROM configuracion
-     LIMIT 1`;
-    params = [];
-  }
+  const params = [tenant_id];
 
   const { rows } = await query(queryText, params);
 

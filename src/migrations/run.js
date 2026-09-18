@@ -5,6 +5,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 require('dotenv').config();
 
@@ -33,15 +34,18 @@ const run = async () => {
       CREATE TABLE IF NOT EXISTS _migraciones (
         id         SERIAL PRIMARY KEY,
         archivo    VARCHAR(255) NOT NULL UNIQUE,
+        hash       VARCHAR(64),
         ejecutado_en TIMESTAMPTZ DEFAULT NOW()
       )
     `);
 
+    await client.query('ALTER TABLE _migraciones ADD COLUMN IF NOT EXISTS hash VARCHAR(64)');
+
     // Obtener migraciones ya ejecutadas
     const { rows: ejecutadas } = await client.query(
-      'SELECT archivo FROM _migraciones ORDER BY id'
+      'SELECT archivo, hash FROM _migraciones ORDER BY id'
     );
-    const ejecutadasSet = new Set(ejecutadas.map((r) => r.archivo));
+    const ejecutadasMap = new Map(ejecutadas.map((r) => [r.archivo, r.hash]));
 
     // Leer archivos SQL ordenados alfabéticamente
     const archivos = fs
@@ -51,10 +55,15 @@ const run = async () => {
 
     let nuevas = 0;
     for (const archivo of archivos) {
-      if (ejecutadasSet.has(archivo)) continue;
-
       const rutaArchivo = path.join(MIGRATIONS_DIR, archivo);
       const sql         = fs.readFileSync(rutaArchivo, 'utf8');
+      const hashActual  = crypto.createHash('sha256').update(sql).digest('hex');
+
+      if (ejecutadasMap.has(archivo)) {
+        const hashPrevio = ejecutadasMap.get(archivo);
+        if (!hashPrevio || hashPrevio === hashActual) continue;
+        throw new Error(`La migración ${archivo} fue modificada después de ejecutarse.`);
+      }
 
       logger.info(`Ejecutando migración: ${archivo}`);
 
@@ -62,8 +71,8 @@ const run = async () => {
         await client.query('BEGIN');
         await client.query(sql);
         await client.query(
-          'INSERT INTO _migraciones (archivo) VALUES ($1)',
-          [archivo]
+          'INSERT INTO _migraciones (archivo, hash) VALUES ($1, $2)',
+          [archivo, hashActual]
         );
         await client.query('COMMIT');
         logger.info(`Migración completada: ${archivo}`);
