@@ -14,6 +14,8 @@ const firmadorService  = require('../firmador/firmador.service');
 const haciendaService  = require('../hacienda/hacienda.service');
 const { getFechaHoraEmision } = require('../generador/generador.utils');
 const logger = require('../../utils/logger');
+const { validarDte } = require('../validacion-dte/dte-schema-validator');
+const { respuestaHaciendaAuditable } = require('../integracion/integracion.utils');
 
 // ─────────────────────────────────────────────
 // HELPER: registrar en auditoría
@@ -91,6 +93,57 @@ const guardarDTE = async ({
     valoresDte
   );
   return rows[0];
+};
+
+const guardarItemsDTE = async ({ dteId, tenant_id, jsonDte }) => {
+  const items = jsonDte.cuerpoDocumento || jsonDte.cuerpo_documento || [];
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  for (const [indice, item] of items.entries()) {
+    await query(
+      `INSERT INTO dtes_items (
+         dte_id, tenant_id, num_item, tipo_item, codigo, descripcion,
+         cantidad, uni_medida, precio_uni, monto_descu,
+         venta_no_suj, venta_exenta, venta_gravada, tributos,
+         psv, no_gravado, iva_item
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (dte_id, num_item) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         tipo_item = EXCLUDED.tipo_item,
+         codigo = EXCLUDED.codigo,
+         descripcion = EXCLUDED.descripcion,
+         cantidad = EXCLUDED.cantidad,
+         uni_medida = EXCLUDED.uni_medida,
+         precio_uni = EXCLUDED.precio_uni,
+         monto_descu = EXCLUDED.monto_descu,
+         venta_no_suj = EXCLUDED.venta_no_suj,
+         venta_exenta = EXCLUDED.venta_exenta,
+         venta_gravada = EXCLUDED.venta_gravada,
+         tributos = EXCLUDED.tributos,
+         psv = EXCLUDED.psv,
+         no_gravado = EXCLUDED.no_gravado,
+         iva_item = EXCLUDED.iva_item`,
+      [
+        dteId,
+        tenant_id,
+        item.numItem || indice + 1,
+        item.tipoItem || 2,
+        item.codigo || null,
+        item.descripcion || item.nombre_producto || 'Item fiscal',
+        item.cantidad || 1,
+        item.uniMedida || 59,
+        item.precioUni || item.precio_unitario || 0,
+        item.montoDescu || item.descuento || 0,
+        item.ventaNoSuj || 0,
+        item.ventaExenta || 0,
+        item.ventaGravada || item.compra || 0,
+        item.tributos ? JSON.stringify(item.tributos) : null,
+        item.psv || 0,
+        item.noGravado || 0,
+        item.ivaItem || null,
+      ],
+    );
+  }
 };
 
 // ─────────────────────────────────────────────
@@ -226,6 +279,10 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, tenant_id, ip, idempot
     tipoDte          = generado.tipoDte;
     version          = generado.version;
 
+    // Validar antes de cualquier persistencia o firma. El mismo objeto validado
+    // se entrega después al firmador para evitar divergencias fiscales.
+    validarDte(jsonDte);
+
     // Verificar idempotencia — no transmitir si ya existe (dentro del tenant)
     const { rows: existe } = await query(
       'SELECT id, estado FROM dtes WHERE codigo_generacion = $1 AND tenant_id = $2',
@@ -277,6 +334,8 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, tenant_id, ip, idempot
       throw err;
     }
 
+    await guardarItemsDTE({ dteId: dteGuardado.id, tenant_id, jsonDte });
+
     await registrarAuditoria('DTE_GENERADO', dteGuardado.id, {
       tipo_dte:         tipoDte,
       numero_control:   numeroControl,
@@ -316,6 +375,7 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, tenant_id, ip, idempot
       await registrarAuditoria('DTE_ACEPTADO', dteGuardado.id, {
         sello:         resultado.sello?.substring(0, 10) + '...',
         observaciones: resultado.observaciones?.length || 0,
+        respuesta_hacienda: respuestaHaciendaAuditable(resultado),
       }, ip, 200, tenant_id);
 
       logger.info('DTE emitido y aceptado por Hacienda', {
@@ -350,6 +410,7 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, tenant_id, ip, idempot
       await registrarAuditoria('DTE_RECHAZADO', dteGuardado.id, {
         codigo_error: resultado.codigo_error,
         descripcion:  resultado.descripcion,
+        respuesta_hacienda: respuestaHaciendaAuditable(resultado),
       }, ip, 422, tenant_id);
 
       throw {

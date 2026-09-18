@@ -18,13 +18,12 @@ const configuracionService    = require('../configuracion/configuracion.service'
 const firmadorService         = require('../firmador/firmador.service');
 const haciendaService         = require('../hacienda/hacienda.service');
 const { generarCodigoGeneracion, getFechaHoraEmision, formatearNIT } = require('../generador/generador.utils');
+const { MAX_DTES_POR_LOTE, dividirEnLotes, filtrarResultadosDelLote } = require('./contingencia.utils');
 const logger = require('../../utils/logger');
 
 // ─────────────────────────────────────────────
 // CONSTANTES
 // ─────────────────────────────────────────────
-const MAX_DTES_POR_LOTE = 100; // Según manual de Hacienda
-
 // ─────────────────────────────────────────────
 // HELPER: registrar en auditoría
 // ─────────────────────────────────────────────
@@ -103,9 +102,16 @@ const construirJsonContingencia = ({ config, dtes, datos }) => {
  * Obtener todos los DTEs en estado contingencia
  * Ordenados por fecha de emisión para procesarlos en orden cronológico
  */
-const obtenerDTEsEnContingencia = async ({ tenant_id } = {}) => {
+const obtenerDTEsEnContingencia = async ({ tenant_id, establecimiento_id } = {}) => {
   if (!tenant_id) {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar contingencias.' };
+  }
+
+  const filtros = ['d.estado = \'contingencia\'', 'd.tenant_id = $1'];
+  const valores = [tenant_id];
+  if (establecimiento_id) {
+    filtros.push(`d.establecimiento_id = $${valores.length + 1}`);
+    valores.push(establecimiento_id);
   }
 
   const { rows } = await query(
@@ -115,9 +121,9 @@ const obtenerDTEsEnContingencia = async ({ tenant_id } = {}) => {
        d.total, d.receptor_nombre,
        d.creado_en
      FROM dtes d
-     WHERE d.estado = 'contingencia' AND d.tenant_id = $1
-     ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
-    [tenant_id]
+       WHERE ${filtros.join(' AND ')}
+       ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
+    valores
   );
 
   return {
@@ -142,21 +148,29 @@ const obtenerDTEsEnContingencia = async ({ tenant_id } = {}) => {
 const notificarContingencia = async ({ datos, passwordPri, ip }) => {
   // Aislamiento: el evento de contingencia se procesa por tenant autenticado.
   const tenant_id = datos.tenant_id || null;
+  const establecimiento_id = datos.establecimiento_id || null;
   if (!tenant_id) {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para procesar la contingencia.' };
   }
 
   try {
     // ── PASO 1: Obtener DTEs en contingencia — SOLO del tenant ──
+    const filtros = ["d.estado = 'contingencia'", 'd.tenant_id = $1', 'd.json_firmado IS NOT NULL'];
+    const valores = [tenant_id];
+    if (establecimiento_id) {
+      filtros.push(`d.establecimiento_id = $${valores.length + 1}`);
+      valores.push(establecimiento_id);
+    }
+
     const { rows: dtesEnContingencia } = await query(
       `SELECT
          d.id, d.tipo_dte, d.codigo_generacion,
          d.numero_control, d.json_firmado,
          d.fecha_emision, d.ambiente
-       FROM dtes d
-       WHERE d.estado = 'contingencia' AND d.tenant_id = $1
-       ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
-      [tenant_id]
+         FROM dtes d
+        WHERE ${filtros.join(' AND ')}
+        ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
+      valores
     );
 
     if (dtesEnContingencia.length === 0) {
@@ -215,11 +229,7 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
     // ── PASO 6: Enviar DTEs en lotes de máximo 100 ──
     // Dividir en lotes y procesar secuencialmente
     const resultadosLotes = [];
-    const lotes = [];
-
-    for (let i = 0; i < dtesEnContingencia.length; i += MAX_DTES_POR_LOTE) {
-      lotes.push(dtesEnContingencia.slice(i, i + MAX_DTES_POR_LOTE));
-    }
+    const lotes = dividirEnLotes(dtesEnContingencia);
 
     for (let numLote = 0; numLote < lotes.length; numLote++) {
       const lote = lotes[numLote];
@@ -237,6 +247,10 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
           tenant_id,
         });
 
+        if (!resultadoLote.codigoLote || !['RECIBIDO', 'PROCESADO'].includes(resultadoLote.estado)) {
+          throw { status: 502, mensaje: 'Hacienda no confirmó la recepción del lote.' };
+        }
+
         resultadosLotes.push({
           numero_lote:  numLote + 1,
           codigo_lote:  resultadoLote.codigoLote,
@@ -248,6 +262,8 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
           numero_lote:  numLote + 1,
           codigo_lote:  resultadoLote.codigoLote,
           dtes_en_lote: lote.length,
+          establecimiento_id,
+          codigos_generacion: lote.map((dte) => dte.codigo_generacion),
         }, ip, tenant_id);
 
         // Actualizar estado de DTEs del lote a 'transmitido'
@@ -258,8 +274,9 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
           for (const dte of lote) {
             await client.query(
               `UPDATE dtes SET estado = 'transmitido'
+               , codigo_lote = $3
                WHERE id = $1 AND estado = 'contingencia' AND tenant_id = $2`,
-              [dte.id, tenant_id]
+              [dte.id, tenant_id, resultadoLote.codigoLote]
             );
           }
           await client.query('COMMIT');
@@ -318,61 +335,101 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
  *
  * @param {string} codigoLote — código devuelto por Hacienda al enviar el lote
  */
-const consultarLote = async ({ codigoLote, tenant_id }) => {
+const consultarLote = async ({ codigoLote, tenant_id, establecimiento_id }) => {
   if (!tenant_id) {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar un lote.' };
   }
 
   try {
+    const { rows: auditoriaLote } = await query(
+      `SELECT detalles
+       FROM auditoria
+       WHERE evento = 'CONTINGENCIA_LOTE_ENVIADO'
+         AND tenant_id = $1
+         AND detalles->>'codigo_lote' = $2
+       ORDER BY creado_en DESC
+       LIMIT 1`,
+      [tenant_id, codigoLote]
+    );
+
+    if (auditoriaLote.length === 0) {
+      throw { status: 404, mensaje: 'Lote no encontrado para el tenant autenticado.' };
+    }
+
+    let detallesLote;
+    try {
+      detallesLote = typeof auditoriaLote[0].detalles === 'string'
+        ? JSON.parse(auditoriaLote[0].detalles)
+        : auditoriaLote[0].detalles;
+    } catch (_) {
+      throw { status: 500, mensaje: 'El registro del lote no tiene un formato válido.' };
+    }
+    if (establecimiento_id && detallesLote?.establecimiento_id && detallesLote.establecimiento_id !== establecimiento_id) {
+      throw { status: 404, mensaje: 'Lote no encontrado para el establecimiento autenticado.' };
+    }
+
     const resultado = await haciendaService.consultarLote({ codigoLote, tenant_id });
+    const { procesados: procesadosDelLote, rechazados: rechazadosDelLote } = filtrarResultadosDelLote(
+      resultado,
+      detallesLote?.codigos_generacion || [],
+    );
 
     // Si el lote fue procesado, actualizar estado de DTEs en BD
     // Siempre acotado al tenant autenticado.
-    if (resultado.procesados?.length > 0) {
+    if (procesadosDelLote.length > 0 || rechazadosDelLote.length > 0) {
       const client = await getClient();
       try {
         await client.query('BEGIN');
 
-        for (const dte of resultado.procesados) {
+        for (const dte of procesadosDelLote) {
+          const filtrosDte = [
+            'codigo_generacion = $2',
+            'tenant_id = $3',
+            "estado IN ('transmitido', 'contingencia')",
+          ];
+          const valoresDte = [dte.selloRecibido || null, dte.codigoGeneracion.toLowerCase(), tenant_id];
+          if (establecimiento_id) {
+            filtrosDte.push('establecimiento_id = $4');
+            valoresDte.push(establecimiento_id);
+          }
           await client.query(
             `UPDATE dtes
              SET estado          = 'aceptado',
-                 sello_recepcion = $1
-             WHERE codigo_generacion = $2
-               AND tenant_id = $3
-               AND estado IN ('transmitido', 'contingencia')`,
-            [
-              dte.selloRecibido,
-              dte.codigoGeneracion.toLowerCase(), // BD guarda en minúsculas
-              tenant_id,
-            ]
+                  sello_recepcion = $1
+             WHERE ${filtrosDte.join(' AND ')}`,
+            valoresDte
           );
         }
 
-        for (const dte of (resultado.rechazados || [])) {
+        for (const dte of rechazadosDelLote) {
+          const filtrosDte = [
+            'codigo_generacion = $2',
+            'tenant_id = $3',
+            "estado IN ('transmitido', 'contingencia')",
+          ];
+          const valoresDte = [
+            JSON.stringify({ codigo: dte.codigoMsg, descripcion: dte.descripcionMsg, observaciones: dte.observaciones || [] }),
+            dte.codigoGeneracion.toLowerCase(),
+            tenant_id,
+          ];
+          if (establecimiento_id) {
+            filtrosDte.push('establecimiento_id = $4');
+            valoresDte.push(establecimiento_id);
+          }
           await client.query(
             `UPDATE dtes
              SET estado           = 'rechazado',
-                 errores_hacienda = $1
-             WHERE codigo_generacion = $2
-               AND tenant_id = $3
-               AND estado IN ('transmitido', 'contingencia')`,
-            [
-              JSON.stringify({
-                codigo:      dte.codigoMsg,
-                descripcion: dte.descripcionMsg,
-              }),
-              dte.codigoGeneracion.toLowerCase(),
-              tenant_id,
-            ]
+                  errores_hacienda = $1
+             WHERE ${filtrosDte.join(' AND ')}`,
+            valoresDte
           );
         }
 
         await client.query('COMMIT');
 
         logger.info('Estado de DTEs del lote actualizado', {
-          procesados: resultado.procesados.length,
-          rechazados: resultado.rechazados?.length || 0,
+          procesados: procesadosDelLote.length,
+          rechazados: rechazadosDelLote.length,
         });
 
       } catch (errTx) {
@@ -387,11 +444,11 @@ const consultarLote = async ({ codigoLote, tenant_id }) => {
 
     return {
       codigo_lote: codigoLote,
-      procesados:  resultado.procesados?.length  || 0,
-      rechazados:  resultado.rechazados?.length  || 0,
+      procesados:  procesadosDelLote.length,
+      rechazados:  rechazadosDelLote.length,
       detalle: {
-        procesados: resultado.procesados || [],
-        rechazados: resultado.rechazados || [],
+        procesados: procesadosDelLote,
+        rechazados: rechazadosDelLote,
       },
     };
 

@@ -1,0 +1,11 @@
+{
+  "source": "Ministerio de Hacienda de El Salvador - svfe-json-schemas",
+  "draft": "draft-07",
+  "schemas": {
+    "01": { "version": 2, "file": "v2/fe-f-v2.json", "sha256": "2887ff3ccf5594eb1f49dcec1ce8bba134a86462f900069de1365d18ff997aff" },
+    "03": { "version": 4, "file": "v4/fe-ccf-v4.json", "sha256": "2c2db8b3f6144bdd0d128ec2babecd38f277f8493458a06cf1b2be7b816fba32" },
+    "05": { "version": 4, "file": "v4/fe-nc-v4.json", "sha256": "f663902030a9ef28ddb8cef7d1e93fa286c1852465175e25d524e3fedb5419d2" },
+    "06": { "version": 4, "file": "v4/fe-nd-v4.json", "sha256": "3b4ffdd4dded315217c365325135d3aede0a67b84bd051c932698c5e5e0c3ca4" },
+    "14": { "version": 2, "file": "v2/fe-fse-v2.json", "sha256": "21b20ae93f85795db3731ee853504edca9998f7f340defd0b6745659840bc75d" }
+  }
+}

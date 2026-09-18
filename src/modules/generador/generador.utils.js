@@ -4,6 +4,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const { query }      = require('../../config/database');
+const { validarPagosContraTotal } = require('./payment.utils');
 
 // ─────────────────────────────────────────────
 // CATÁLOGOS OFICIALES
@@ -230,6 +231,7 @@ const construirEmisor = (config, establecimiento) => ({
   direccion: {
     departamento: establecimiento.departamento_cod || '06',
     municipio:    establecimiento.municipio_cod    || '20',
+    distrito:     establecimiento.distrito_cod      || establecimiento.municipio_cod || '20',
     complemento:  establecimiento.direccion        || config.direccion,
   },
   telefono:      formatearTelefono(establecimiento.telefono || config.telefono) || '00000000',
@@ -237,6 +239,15 @@ const construirEmisor = (config, establecimiento) => ({
   codEstable:    establecimiento.cod_estable      || null,
   codPuntoVenta: establecimiento.cod_punto_venta   || null,
 });
+
+const construirEmisorPorTipo = (config, establecimiento, tipoDte) => {
+  const emisor = construirEmisor(config, establecimiento);
+  if (tipoDte === '05' || tipoDte === '06') {
+    delete emisor.codEstable;
+    delete emisor.codPuntoVenta;
+  }
+  return emisor;
+};
 
 // ─────────────────────────────────────────────
 // SECCIÓN: RECEPTOR
@@ -266,7 +277,27 @@ const construirReceptorCCF = (receptor) => ({
   direccion:      receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
     complemento:  receptor.direccion    || '',
+  } : null,
+  telefono: formatearTelefono(receptor.telefono) || null,
+  correo:   receptor.correo || null,
+});
+
+// NC y ND v4 usan tipoDocumento/numDocumento, no nit como campo raíz.
+const construirReceptorNCND = (receptor) => ({
+  tipoDocumento:   receptor.tipo_documento || '36',
+  numDocumento:    receptor.num_documento || formatearNIT(receptor.nit),
+  nrc:             formatearNRC(receptor.nrc) || null,
+  nombre:          receptor.nombre,
+  codActividad:    receptor.cod_actividad    || null,
+  descActividad:   receptor.desc_actividad   || null,
+  nombreComercial: receptor.nombre_comercial || null,
+  direccion: receptor.departamento_cod ? {
+    departamento: receptor.departamento_cod,
+    municipio:    receptor.municipio_cod || '20',
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
+    complemento:  receptor.direccion || '',
   } : null,
   telefono: formatearTelefono(receptor.telefono) || null,
   correo:   receptor.correo || null,
@@ -282,6 +313,7 @@ const construirReceptorFSE = (receptor) => ({
   direccion:     receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
     complemento:  receptor.direccion    || '',
   } : null,
   telefono: formatearTelefono(receptor.telefono) || null,
@@ -379,6 +411,7 @@ const construirResumenFSE = (items, condicionOperacion = 1, pagos = null, observ
   const pagosFinales = pagos || [
     { codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null },
   ];
+  validarPagosContraTotal(pagosFinales, totalPagar);
 
   return {
     totalCompra,
@@ -450,6 +483,7 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
   const pagosFinales = pagos || [
     { codigo: '01', montoPago: totalPagar, referencia: null, plazo: null, periodo: null },
   ];
+  validarPagosContraTotal(pagosFinales, totalPagar);
 
   const resumen = {
     totalNoSuj:         redondear2(totalNoSuj),
@@ -476,7 +510,7 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     observaciones,
   };
 
-  if (tipoDte === '01' || tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
+  if (tipoDte === '01' || tipoDte === '05' || tipoDte === '06') {
     resumen.totalIva = ivaValor;
   }
 
@@ -485,8 +519,17 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
   }
 
   if (tipoDte === '05' || tipoDte === '06') {
+    delete resumen.descuNoSuj;
+    delete resumen.descuExenta;
+    delete resumen.descuGravada;
+    delete resumen.porcentajeDescuento;
+    delete resumen.subTotal;
+    delete resumen.saldoFavor;
+    delete resumen.pagos;
     resumen.codigoRetencionMH = null;
   }
+
+  if (tipoDte === '01') delete resumen.ivaPerci;
 
   return resumen;
 };
@@ -519,8 +562,10 @@ module.exports = {
   obtenerSiguienteCorrelativo,
   construirIdentificacion,
   construirEmisor,
+  construirEmisorPorTipo,
   construirReceptorFCF,
   construirReceptorCCF,
+  construirReceptorNCND,
   construirReceptorFSE,
   construirItem,
   construirItemFSE,
