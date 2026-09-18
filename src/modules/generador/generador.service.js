@@ -118,16 +118,19 @@ const generarFCF = async (datos) => {
     );
 
     // Condición de operación y pagos
+    // FCF en contado (condicion 1): pagos: null como los FCF reales aceptados; crédito (2): array obligatorio
     const condicion = datos.condicion_operacion || 1;
-    const pagos     = datos.pagos || construirPagos(
-      datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, 0
-    );
+    const pagos     = condicion === 2
+      ? (datos.pagos || construirPagos(
+          datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, 0
+        ))
+      : null;
 
     // Resumen
     const resumen = construirResumen(cuerpoDocumento, tipoDte, condicion, null);
 
-    // Actualizar montoPago con el total real
-    if (pagos.length > 0 && !datos.pagos) {
+    // Actualizar montoPago con el total real (solo crédito con pagos autogenerados)
+    if (pagos && pagos.length > 0 && !datos.pagos) {
       pagos[0].montoPago = resumen.totalPagar;
     }
     resumen.pagos = pagos;

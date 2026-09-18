@@ -9,8 +9,8 @@ const { query }      = require('../../config/database');
 // CATÁLOGOS OFICIALES
 // ─────────────────────────────────────────────
 const TIPOS_DTE = {
-  '01': { nombre: 'Factura',                       version: 2 },
-  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 4 },
+  '01': { nombre: 'Factura',                       version: 1 },
+  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 3 },
   '05': { nombre: 'Nota de Crédito',               version: 4 },
   '06': { nombre: 'Nota de Débito',                version: 4 },
   '11': { nombre: 'Factura de Exportación',        version: 3 },
@@ -85,7 +85,7 @@ const redondear2 = (num) => Math.round(num * 100) / 100;
 const redondear8 = (num) => Math.round(num * 1e8) / 1e8;
 
 const numeroALetras = (monto) => {
-  if (isNaN(monto) || monto < 0) return 'CERO 00/100 DÓLARES';
+  if (isNaN(monto) || monto < 0) return 'CERO CON 00/100 DOLARES';
 
   const entero   = Math.floor(monto);
   const centavos = Math.round((monto - entero) * 100);
@@ -131,7 +131,7 @@ const numeroALetras = (monto) => {
 
   const letras = convertir(entero);
   const cents  = `${centavos.toString().padStart(2, '0')}/100`;
-  return `${letras} ${cents} DÓLARES`;
+  return `${letras} CON ${cents} DOLARES`;
 };
 
 // ─────────────────────────────────────────────
@@ -223,6 +223,7 @@ const construirEmisor = (config, establecimiento) => ({
   codActividad:     config.codigo_actividad,
   descActividad:    config.desc_actividad   || '',
   nombreComercial:  config.nombre_comercial  || null,
+  tipoEstablecimiento: establecimiento.tipo_establecimiento || null,
   direccion: {
     departamento: establecimiento.departamento_cod || '06',
     municipio:    establecimiento.municipio_cod    || '20',
@@ -230,8 +231,10 @@ const construirEmisor = (config, establecimiento) => ({
   },
   telefono:      formatearTelefono(establecimiento.telefono || config.telefono) || '00000000',
   correo:        establecimiento.correo || config.correo || config.email || '',
-  codEstable:    establecimiento.cod_estable      || null,
-  codPuntoVenta: establecimiento.cod_punto_venta   || null,
+  codEstable:    establecimiento.cod_estable || establecimiento.cod_estable_mh || null,
+  codPuntoVenta: establecimiento.cod_punto_venta || establecimiento.cod_punto_venta_mh || null,
+  codEstableMH:    establecimiento.cod_estable_mh      || null,
+  codPuntoVentaMH: establecimiento.cod_punto_venta_mh  || null,
 });
 
 // ─────────────────────────────────────────────
@@ -240,15 +243,19 @@ const construirEmisor = (config, establecimiento) => ({
 
 // FCF: tipoDocumento + numDocumento (estructura diferente)
 const construirReceptorFCF = (receptor) => ({
-  tipoDocumento: receptor.tipo_documento || '13',
-  numDocumento:  receptor.num_documento  || null,
+  tipoDocumento: receptor.tipo_documento || '37',
+  numDocumento:  receptor.num_documento  || '000000',
   nrc:           null,
   nombre:        receptor.nombre         || null,
   codActividad:  null,
   descActividad: null,
-  direccion:     null,
-  telefono:      null,
-  correo:        null,
+  direccion:     receptor.departamento_cod ? {
+    departamento: receptor.departamento_cod,
+    municipio:    receptor.municipio_cod || '20',
+    complemento:  receptor.direccion    || '',
+  } : null,
+  telefono:      receptor.telefono || null,
+  correo:        receptor.correo   || null,
 });
 
 // CCF: nit/nrc con datos completos del receptor empresa
@@ -292,28 +299,29 @@ const construirItem = (item, numItem, tipoDte) => {
   const precioUni = Number(item.precio_unitario) || 0;
   const descuento = Number(item.descuento)       || 0;
 
-  const subtotalBruto = (cantidad * precioUni) - descuento;
+  const subtotalBruto = cantidad * precioUni;
+  const baseGravable  = subtotalBruto - descuento;
   let   ventaGravada  = 0;
   let   ivaItem       = null;
 
   if (tipoDte === '01') {
-    // FCF: precio incluye IVA — 8 decimales a nivel ítem
-    ventaGravada = redondear8(subtotalBruto / 1.13);
-    ivaItem      = redondear8(subtotalBruto - ventaGravada);
+    // FCF: precio incluye IVA — ventaGravada es el bruto CON IVA (como FCF reales aceptados); ivaItem desglosa el IVA de la base descontada
+    ventaGravada = redondear8(subtotalBruto);
+    ivaItem      = redondear8(baseGravable - baseGravable / 1.13);
   } else {
-    // CCF, NC, ND: precio sin IVA — 8 decimales a nivel ítem
+    // CCF, NC, ND: precio sin IVA — 8 decimales a nivel ítem; ventaGravada es el bruto completo (el descuento vive en montoDescu/resumen)
     ventaGravada = redondear8(subtotalBruto);
   }
 
   const base = {
     numItem:         numItem,
-    tipoItem:        item.tipo_item  || 2,
+    tipoItem:        item.tipo_item  || 1,
     numeroDocumento: null,
     codigo:          item.codigo     || null,
     codTributo:      null,
     descripcion:     item.descripcion || item.nombre_producto || '',
     cantidad:        cantidad,
-    uniMedida:       item.uni_medida || 59,
+    uniMedida:       item.uni_medida || 99,
     precioUni:       precioUni,
     montoDescu:      descuento,
     ventaNoSuj:      0.0,
@@ -424,11 +432,13 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
   const subTotalVentas = redondear2(totalNoSuj + totalExenta + totalGravada);
   const subTotal       = redondear2(subTotalVentas - totalDescu);
 
+  const baseIva = totalGravada - totalDescu;
+
   let ivaValor = 0;
   if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
-    ivaValor = redondear2(totalGravada * 0.13);
+    ivaValor = redondear2(baseIva * 0.13);
   } else if (tipoDte === '01') {
-    ivaValor = redondear2(totalGravada - (totalGravada / 1.13));
+    ivaValor = redondear2(baseIva - (baseIva / 1.13));
   }
 
   // CCF, NC, ND: precio sin IVA → montoTotal = subTotal + IVA
@@ -439,7 +449,7 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     : redondear2(subTotal);
   const totalPagar = montoTotalOperacion;
 
-  const tributos = (tipoDte !== '14' && ivaValor > 0) ? [
+  const tributos = (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') && ivaValor > 0 ? [
     { codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: ivaValor },
   ] : null;
 
@@ -459,8 +469,6 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     totalDescu,
     tributos,
     subTotal,
-    ivaPerci:           0.0,
-    ivaRete:            0.0,
     reteRenta:          0.0,
     montoTotalOperacion,
     totalNoGravado:     0.0,
@@ -471,6 +479,13 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     pagos:              pagosFinales,
     observaciones,
   };
+
+  if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
+    resumen.ivaPerci1 = 0.0;
+    resumen.ivaRete1 = 0.0;
+  } else if (tipoDte === '01') {
+    resumen.ivaRete1 = 0.0;
+  }
 
   if (tipoDte === '01' || tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
     resumen.totalIva = ivaValor;
