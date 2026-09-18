@@ -15,15 +15,16 @@ const {
   obtenerSiguienteCorrelativo,
   construirIdentificacion,
   construirEmisor,
+  construirEmisorPorTipo,
   construirReceptorFCF,
   construirReceptorCCF,
+  construirReceptorNCND,
   construirReceptorFSE,
   construirItem,
   construirItemFSE,
   construirResumen,
   construirResumenFSE,
   construirDocumentoRelacionado,
-  construirExtension,
 } = require('./generador.utils');
 
 // ─────────────────────────────────────────────
@@ -131,7 +132,7 @@ const generarFCF = async (datos) => {
     );
 
     // Resumen
-    const resumen = construirResumen(cuerpoDocumento, tipoDte, condicion, null);
+    const resumen = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null);
 
     // Actualizar montoPago con el total real
     if (pagos.length > 0 && !datos.pagos) {
@@ -162,7 +163,6 @@ const generarFCF = async (datos) => {
       receptor,
       cuerpoDocumento,
       resumen,
-      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
@@ -227,11 +227,10 @@ const generarCCF = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
       }),
       ...CAMPOS_RAIZ_NULL,
-      emisor:          construirEmisor(config, establecimiento),
+      emisor:          construirEmisorPorTipo(config, establecimiento, tipoDte),
       receptor:        construirReceptorCCF(datos.receptor),
       cuerpoDocumento,
       resumen,
-      extension: construirExtension(datos.extension || null),
     };
 
     await client.query('COMMIT');
@@ -295,13 +294,11 @@ const generarFSE = async (datos) => {
         tipoContingencia:  datos.tipo_contingencia  || null,
         motivoContingencia: datos.motivo_contingencia || null,
       }),
-      ...CAMPOS_RAIZ_NULL,
+      apendice:        null,
       emisor:          construirEmisor(config, establecimiento),
       receptor:        construirReceptorFSE(datos.receptor),
       cuerpoDocumento,
       resumen,
-      extension: construirExtension(datos.extension || null),
-      observaciones:  datos.observaciones || null,
     };
 
     await client.query('COMMIT');
@@ -367,14 +364,13 @@ const generarNotaCredito = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
         fusion:            datos.fusion             || null,
       }),
-      ...CAMPOS_RAIZ_NULL,
       documentoRelacionado: docsRel,
-      emisor:          construirEmisor(config, establecimiento),
-      receptor:        construirReceptorCCF(datos.receptor),
-      ventaTercero:    null,
+      ventaTercero:         null,
+      apendice:             null,
+      emisor:               construirEmisorPorTipo(config, establecimiento, tipoDte),
+      receptor:              construirReceptorNCND(datos.receptor),
       cuerpoDocumento,
       resumen,
-      apendice:        null,
     };
 
     await client.query('COMMIT');
@@ -440,14 +436,13 @@ const generarNotaDebito = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
         fusion:            datos.fusion             || null,
       }),
-      ...CAMPOS_RAIZ_NULL,
       documentoRelacionado: docsRel,
-      emisor:          construirEmisor(config, establecimiento),
-      receptor:        construirReceptorCCF(datos.receptor),
-      ventaTercero:    null,
+      ventaTercero:         null,
+      apendice:             null,
+      emisor:               construirEmisorPorTipo(config, establecimiento, tipoDte),
+      receptor:              construirReceptorNCND(datos.receptor),
       cuerpoDocumento,
       resumen,
-      apendice:        null,
     };
 
     await client.query('COMMIT');

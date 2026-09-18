@@ -19,6 +19,7 @@ const {
 const configuracionService = require('../configuracion/configuracion.service');
 const { obtenerPasswordFirma } = require('./credenciales.service');
 const logger = require('../../utils/logger');
+const { esJwt } = require('../integracion/integracion.utils');
 
 // ─────────────────────────────────────────────
 // CLIENTE HTTP con timeout estricto
@@ -90,6 +91,16 @@ const firmarDTE = async ({ jsonDte, passwordPri, tenant_id }) => {
 
     // El firmador devuelve el JWT firmado en data.body
     const jwtFirmado = data.body;
+    if (!esJwt(jwtFirmado)) {
+      logger.error('El firmador devolvió un documento firmado con formato inválido', {
+        tipo: jsonDte?.identificacion?.tipoDte,
+        control: jsonDte?.identificacion?.numeroControl,
+      });
+      throw {
+        status: 502,
+        mensaje: 'El firmador devolvió una respuesta de firma inválida.',
+      };
+    }
 
     logger.info('DTE firmado exitosamente', {
       tipo:    jsonDte?.identificacion?.tipoDte,

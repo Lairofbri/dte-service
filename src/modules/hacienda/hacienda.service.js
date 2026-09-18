@@ -23,6 +23,12 @@ const {
 } = require('../../config/env');
 const configuracionService = require('../configuracion/configuracion.service');
 const logger = require('../../utils/logger');
+const {
+  generarIdEnvio,
+  esErrorTransitorio,
+  respuestaHaciendaAuditable,
+  esJwt,
+} = require('../integracion/integracion.utils');
 
 // ─────────────────────────────────────────────
 // CLIENTE HTTP con timeout estricto
@@ -209,7 +215,7 @@ const transmitirDTE = async ({
 
   // idEnvio: correlativo a discreción del emisor
   // Usamos timestamp para garantizar unicidad por sesión
-  const idEnvio = Date.now();
+  const idEnvio = generarIdEnvio();
 
   const body = {
     ambiente:          AMBIENTE_HACIENDA,
@@ -289,10 +295,9 @@ const transmitirDTE = async ({
 
       if (intentos > maxIntentos) break;
 
-      // Política de reintentos según manual Hacienda:
-      // Antes de reenviar, consultar si el DTE ya fue recibido
-      // para evitar duplicados
-      if (esErrorConexion(err) || err.code === 'ECONNABORTED') {
+      // Solo se reintentan fallos transitorios. Antes de reenviar se consulta
+      // siempre el estado para evitar duplicar un DTE aceptado por Hacienda.
+      if (esErrorTransitorio(err)) {
         logger.warn('Hacienda no respondió, consultando estado antes de reintentar', {
           codigo_generacion: codigoGeneracion,
           intento:           intentos,
@@ -319,8 +324,10 @@ const transmitirDTE = async ({
         continue;
       }
 
-      // Error no recuperable
-      break;
+      throw {
+        status: err.response?.status >= 400 ? 502 : 500,
+        mensaje: 'Hacienda devolvió un error no recuperable durante la transmisión.',
+      };
     }
   }
 
@@ -447,7 +454,7 @@ const notificarContingencia = async ({ documentoFirmado, tenant_id }) => {
 const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
   const { token } = await autenticar({ tenant_id });
 
-  const idEnvio = Date.now();
+  const idEnvio = generarIdEnvio();
 
   try {
     const respuesta = await clienteHacienda.post(
@@ -500,6 +507,14 @@ const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
  * @param {string}   ambiente   — 00|01
  */
 const transmitirLote = async ({ documentos, nitEmisor, ambiente, tenant_id }) => {
+  if (!tenant_id) throw { status: 400, mensaje: 'Tenant autenticado requerido para transmitir un lote.' };
+  if (!Array.isArray(documentos) || documentos.length === 0 || documentos.length > 100) {
+    throw { status: 400, mensaje: 'Un lote debe contener entre 1 y 100 documentos.' };
+  }
+  if (documentos.some((documento) => !esJwt(documento))) {
+    throw { status: 400, mensaje: 'El lote contiene un documento firmado inválido.' };
+  }
+
   const { token } = await autenticar({ tenant_id });
 
   // idEnvio debe ser UUID v4 en MAYÚSCULAS según el manual de lotes
@@ -560,6 +575,9 @@ const transmitirLote = async ({ documentos, nitEmisor, ambiente, tenant_id }) =>
  * @param {string} codigoLote — código devuelto por Hacienda al enviar el lote
  */
 const consultarLote = async ({ codigoLote, tenant_id }) => {
+  if (!tenant_id) throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar un lote.' };
+  if (!codigoLote) throw { status: 400, mensaje: 'El código de lote es requerido.' };
+
   const { token } = await autenticar({ tenant_id });
 
   // URL: /fesv/recepcion/consultadtelote/{codigoLote}
