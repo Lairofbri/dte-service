@@ -11,10 +11,12 @@ require('dotenv').config();
 
 const logger = require('../utils/logger');
 
+const sslRejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
+    ? { rejectUnauthorized: sslRejectUnauthorized }
     : false,
 });
 

@@ -33,6 +33,7 @@ module.exports = {
 
   // Base de datos
   DATABASE_URL: requerida('DATABASE_URL'),
+  DB_SSL_REJECT_UNAUTHORIZED: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
 
   // ── Seguridad del servicio ──
   // API Key hasheada con bcrypt — el POS envía la API Key raw

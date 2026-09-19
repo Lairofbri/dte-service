@@ -3,13 +3,13 @@
 // Multi-tenant: una BD compartida con tenant_id en todas las tablas
 
 const { Pool } = require('pg');
-const { DATABASE_URL, ES_PRODUCCION } = require('./env');
+const { DATABASE_URL, ES_PRODUCCION, DB_SSL_REJECT_UNAUTHORIZED } = require('./env');
 const logger = require('../utils/logger');
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: ES_PRODUCCION
-    ? { rejectUnauthorized: false }
+    ? { rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED }
     : false,
   max:              10,
   idleTimeoutMillis: 30000,
