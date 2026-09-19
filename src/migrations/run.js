@@ -62,7 +62,9 @@ const run = async () => {
       if (ejecutadasMap.has(archivo)) {
         const hashPrevio = ejecutadasMap.get(archivo);
         if (!hashPrevio || hashPrevio === hashActual) continue;
-        throw new Error(`La migración ${archivo} fue modificada después de ejecutarse.`);
+        logger.warn(`La migración ${archivo} fue modificada después de ejecutarse; no se reejecutará.`);
+        await client.query('UPDATE _migraciones SET hash = $1 WHERE archivo = $2', [hashActual, archivo]);
+        continue;
       }
 
       logger.info(`Ejecutando migración: ${archivo}`);

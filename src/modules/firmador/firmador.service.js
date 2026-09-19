@@ -13,6 +13,7 @@ const axios  = require('axios');
 const {
   URL_FIRMADOR,
   TIMEOUT_FIRMADOR,
+  FIRMADOR_API_KEY,
 } = require('../../config/env');
 // NIT se lee de la BD — la única fuente de verdad del emisor
 // No del env — permite vender a múltiples clientes sin cambiar variables
@@ -27,9 +28,10 @@ const { esJwt } = require('../integracion/integracion.utils');
 // ─────────────────────────────────────────────
 const clienteFirmador = axios.create({
   timeout: parseInt(TIMEOUT_FIRMADOR, 10),
-  headers: {
-    'Content-Type': 'application/json',
-  },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(FIRMADOR_API_KEY ? { 'X-Firmador-Key': FIRMADOR_API_KEY } : {}),
+      },
 });
 
 // ═════════════════════════════════════════════

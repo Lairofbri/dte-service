@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "migrate": "node src/migrations/run.js",
+    "typecheck": "node scripts/typecheck.js",
     "test:unit": "node --test tests/unit/dte-schema-validator.test.js",
     "validate:dte-schemas": "node --test tests/unit/dte-schema-validator.test.js",
     "test:e2e": "playwright test",

@@ -70,6 +70,7 @@ module.exports = {
   // ── Firmador ──
   URL_FIRMADOR:     requerida('URL_FIRMADOR'),
   TIMEOUT_FIRMADOR: opcionalInt('TIMEOUT_FIRMADOR', 10000),
+  FIRMADOR_API_KEY: opcional('FIRMADOR_API_KEY'),
   // Contraseña de la llave privada del certificado de firma.
   // NUNCA se persiste en BD. Se inyecta en runtime (env o Secret Manager).
   // Se lee exclusivamente dentro de la operación de firma.

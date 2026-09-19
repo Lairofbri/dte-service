@@ -42,6 +42,11 @@ const clienteHacienda = axios.create({
   },
 });
 
+const obtenerAmbienteTenant = async (tenant_id) => {
+  const configuracion = await configuracionService.obtenerConfiguracion({ tenant_id });
+  return configuracion.ambiente || AMBIENTE_HACIENDA;
+};
+
 // ─────────────────────────────────────────────
 // HELPERS INTERNOS
 // ─────────────────────────────────────────────
@@ -97,16 +102,18 @@ const parsearErrorHacienda = (err) => {
  * @returns {{ token: string, ambiente: string }}
  */
 const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
+  const ambiente = await obtenerAmbienteTenant(tenant_id);
+
   // Verificar si el token cacheado sigue vigente
   if (!forzarRenovacion) {
     const tokenVigente = await configuracionService.obtenerTokenHacienda({ tenant_id });
     if (tokenVigente) {
       logger.info('Token de Hacienda vigente — reutilizando');
-      return { token: tokenVigente, ambiente: AMBIENTE_HACIENDA };
+      return { token: tokenVigente, ambiente };
     }
   }
 
-  logger.info('Autenticando con Hacienda...', { ambiente: AMBIENTE_HACIENDA });
+  logger.info('Autenticando con Hacienda...', { ambiente });
 
   // Obtener credenciales desencriptadas — solo para uso interno
   const credenciales = await configuracionService.obtenerCredencialesHacienda({ tenant_id });
@@ -146,7 +153,7 @@ const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
 
     // Calcular expiración según ambiente
     // Producción: 24 horas, Pruebas: 48 horas
-    const horasExpiracion = AMBIENTE_HACIENDA === '01' ? 24 : 48;
+    const horasExpiracion = ambiente === '01' ? 24 : 48;
     const expiraEn = new Date();
     expiraEn.setHours(expiraEn.getHours() + horasExpiracion);
 
@@ -158,12 +165,12 @@ const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
     });
 
     logger.info('Autenticación con Hacienda exitosa', {
-      ambiente:     AMBIENTE_HACIENDA,
+      ambiente,
       expira_en:    expiraEn.toISOString(),
       // NUNCA loguear el token
     });
 
-    return { token, ambiente: AMBIENTE_HACIENDA };
+    return { token, ambiente };
 
   } catch (err) {
     // Re-lanzar errores controlados
@@ -212,13 +219,14 @@ const transmitirDTE = async ({
 }) => {
   // Obtener token vigente (renueva automáticamente si expiró)
   const { token } = await autenticar({ tenant_id });
+  const ambiente = await obtenerAmbienteTenant(tenant_id);
 
   // idEnvio: correlativo a discreción del emisor
   // Usamos timestamp para garantizar unicidad por sesión
   const idEnvio = generarIdEnvio();
 
   const body = {
-    ambiente:          AMBIENTE_HACIENDA,
+    ambiente,
     idEnvio,
     version,
     tipoDte,
@@ -235,7 +243,7 @@ const transmitirDTE = async ({
         tipo_dte:          tipoDte,
         codigo_generacion: codigoGeneracion,
         intento:           intentos + 1,
-        ambiente:          AMBIENTE_HACIENDA,
+        ambiente,
       });
 
       const respuesta = await clienteHacienda.post(
@@ -453,6 +461,7 @@ const notificarContingencia = async ({ documentoFirmado, tenant_id }) => {
  */
 const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
   const { token } = await autenticar({ tenant_id });
+  const ambiente = await obtenerAmbienteTenant(tenant_id);
 
   const idEnvio = generarIdEnvio();
 
@@ -460,7 +469,7 @@ const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
     const respuesta = await clienteHacienda.post(
       URL_ANULACION_HACIENDA,
       {
-        ambiente:  AMBIENTE_HACIENDA,
+        ambiente,
         idEnvio,
         version,
         documento: documentoFirmado,

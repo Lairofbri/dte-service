@@ -8,9 +8,15 @@ importers:
 
   .:
     dependencies:
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
       axios:
         specifier: ^1.7.2
-        version: 1.18.1(supports-color@5.5.0)
+        version: 1.18.1(debug@4.4.3(supports-color@5.5.0))(supports-color@5.5.0)
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -31,10 +37,10 @@ importers:
         version: 16.6.1
       express:
         specifier: ^4.19.2
-        version: 4.22.2
+        version: 4.22.2(supports-color@5.5.0)
       express-rate-limit:
         specifier: ^7.3.1
-        version: 7.5.1(express@4.22.2)
+        version: 7.5.1(express@4.22.2(supports-color@5.5.0))
       helmet:
         specifier: ^7.1.0
         version: 7.2.0
@@ -106,6 +112,17 @@ packages:
   agent-base@6.0.2:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
     engines: {node: '>= 6.0.0'}
+
+  ajv-formats@3.0.1:
+    resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
+    peerDependencies:
+      ajv: ^8.0.0
+    peerDependenciesMeta:
+      ajv:
+        optional: true
+
+  ajv@8.20.0:
+    resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
 
   anymatch@3.1.3:
     resolution: {integrity: sha512-KMReFUr0B4t+D+OBkjR3KYqvocp2XaSzO55UcB6mgQMd3KbcE+mWTyvVV7D/zsdEbNnV6acZUutkiHQXvTr1Rw==}
@@ -216,6 +233,7 @@ packages:
 
   crypto-js@4.2.0:
     resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+    deprecated: Active development of CryptoJS has been discontinued. This library is no longer maintained.
 
   debug@2.6.9:
     resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
@@ -303,6 +321,12 @@ packages:
   express@4.22.2:
     resolution: {integrity: sha512-IuL+Elrou2ZvCFHs18/CIzy2Nzvo25nZ1/D2eIZlz7c+QUayAcYoiM2BthCjs+EBHVpjYjcuLDAiCWgeIX3X1Q==}
     engines: {node: '>= 0.10.0'}
+
+  fast-deep-equal@3.1.3:
+    resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
+
+  fast-uri@3.1.8:
+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
 
   fecha@4.2.3:
     resolution: {integrity: sha512-OP2IUU6HeYKJi3i0z4A19kHMQoLVs4Hc+DPqqxI2h/DPZHTm/vjsfC6P0b4jCMy14XizLBqvndQ+UilD7707Jw==}
@@ -441,6 +465,9 @@ packages:
 
   joi@17.13.4:
     resolution: {integrity: sha512-1RuuER6kmt8K8I3nIWvPZKi5RQCb568ZPyY4Pwjlua+yo+63ZTmIwxLZH0heBmiKN4uxjvCiarDrjaeH84xicQ==}
+
+  json-schema-traverse@1.0.0:
+    resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
   jsonwebtoken@9.0.3:
     resolution: {integrity: sha512-MT/xP0CrubFRNLNKvxJ2BYfy53Zkm++5bX9dtuPbqAeQpTVe0MQTFhao8+Cp//EmJp244xt6Drw/GVEGCUj40g==}
@@ -671,6 +698,10 @@ packages:
     resolution: {integrity: sha512-hOS089on8RduqdbhvQ5Z37A0ESjsqz6qnRcffsMU3495FuTdqSm+7bhJ29JvIOsBDEEnan5DPu9t3To9VRlMzA==}
     engines: {node: '>=8.10.0'}
 
+  require-from-string@2.0.2:
+    resolution: {integrity: sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==}
+    engines: {node: '>=0.10.0'}
+
   safe-buffer@5.1.2:
     resolution: {integrity: sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==}
 
@@ -866,6 +897,17 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  ajv-formats@3.0.1(ajv@8.20.0):
+    optionalDependencies:
+      ajv: 8.20.0
+
+  ajv@8.20.0:
+    dependencies:
+      fast-deep-equal: 3.1.3
+      fast-uri: 3.1.8
+      json-schema-traverse: 1.0.0
+      require-from-string: 2.0.2
+
   anymatch@3.1.3:
     dependencies:
       normalize-path: 3.0.0
@@ -877,9 +919,9 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios@1.18.1(supports-color@5.5.0):
+  axios@1.18.1(debug@4.4.3(supports-color@5.5.0))(supports-color@5.5.0):
     dependencies:
-      follow-redirects: 1.16.0
+      follow-redirects: 1.16.0(debug@4.4.3(supports-color@5.5.0))
       form-data: 4.0.6
       https-proxy-agent: 5.0.1(supports-color@5.5.0)
       proxy-from-env: 2.1.0
@@ -893,11 +935,11 @@ snapshots:
 
   binary-extensions@2.3.0: {}
 
-  body-parser@1.20.6:
+  body-parser@1.20.6(supports-color@5.5.0):
     dependencies:
       bytes: 3.1.2
       content-type: 1.0.5
-      debug: 2.6.9
+      debug: 2.6.9(supports-color@5.5.0)
       depd: 2.0.0
       destroy: 1.2.0
       http-errors: 2.0.1
@@ -989,9 +1031,11 @@ snapshots:
 
   crypto-js@4.2.0: {}
 
-  debug@2.6.9:
+  debug@2.6.9(supports-color@5.5.0):
     dependencies:
       ms: 2.0.0
+    optionalDependencies:
+      supports-color: 5.5.0
 
   debug@4.4.3(supports-color@5.5.0):
     dependencies:
@@ -1051,25 +1095,25 @@ snapshots:
 
   etag@1.8.1: {}
 
-  express-rate-limit@7.5.1(express@4.22.2):
+  express-rate-limit@7.5.1(express@4.22.2(supports-color@5.5.0)):
     dependencies:
-      express: 4.22.2
+      express: 4.22.2(supports-color@5.5.0)
 
-  express@4.22.2:
+  express@4.22.2(supports-color@5.5.0):
     dependencies:
       accepts: 1.3.8
       array-flatten: 1.1.1
-      body-parser: 1.20.6
+      body-parser: 1.20.6(supports-color@5.5.0)
       content-disposition: 0.5.4
       content-type: 1.0.5
       cookie: 0.7.2
       cookie-signature: 1.0.7
-      debug: 2.6.9
+      debug: 2.6.9(supports-color@5.5.0)
       depd: 2.0.0
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
-      finalhandler: 1.3.2
+      finalhandler: 1.3.2(supports-color@5.5.0)
       fresh: 0.5.2
       http-errors: 2.0.1
       merge-descriptors: 1.0.3
@@ -1081,8 +1125,8 @@ snapshots:
       qs: 6.15.3
       range-parser: 1.2.1
       safe-buffer: 5.2.1
-      send: 0.19.2
-      serve-static: 1.16.3
+      send: 0.19.2(supports-color@5.5.0)
+      serve-static: 1.16.3(supports-color@5.5.0)
       setprototypeof: 1.2.0
       statuses: 2.0.2
       type-is: 1.6.18
@@ -1091,15 +1135,19 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  fast-deep-equal@3.1.3: {}
+
+  fast-uri@3.1.8: {}
+
   fecha@4.2.3: {}
 
   fill-range@7.1.1:
     dependencies:
       to-regex-range: 5.0.1
 
-  finalhandler@1.3.2:
+  finalhandler@1.3.2(supports-color@5.5.0):
     dependencies:
-      debug: 2.6.9
+      debug: 2.6.9(supports-color@5.5.0)
       encodeurl: 2.0.0
       escape-html: 1.0.3
       on-finished: 2.4.1
@@ -1111,7 +1159,9 @@ snapshots:
 
   fn.name@1.1.0: {}
 
-  follow-redirects@1.16.0: {}
+  follow-redirects@1.16.0(debug@4.4.3(supports-color@5.5.0)):
+    optionalDependencies:
+      debug: 4.4.3(supports-color@5.5.0)
 
   form-data@4.0.6:
     dependencies:
@@ -1226,6 +1276,8 @@ snapshots:
       '@sideway/address': 4.1.5
       '@sideway/formula': 3.0.1
       '@sideway/pinpoint': 2.0.0
+
+  json-schema-traverse@1.0.0: {}
 
   jsonwebtoken@9.0.3:
     dependencies:
@@ -1450,6 +1502,8 @@ snapshots:
     dependencies:
       picomatch: 2.3.2
 
+  require-from-string@2.0.2: {}
+
   safe-buffer@5.1.2: {}
 
   safe-buffer@5.2.1: {}
@@ -1462,9 +1516,9 @@ snapshots:
 
   semver@7.8.5: {}
 
-  send@0.19.2:
+  send@0.19.2(supports-color@5.5.0):
     dependencies:
-      debug: 2.6.9
+      debug: 2.6.9(supports-color@5.5.0)
       depd: 2.0.0
       destroy: 1.2.0
       encodeurl: 2.0.0
@@ -1480,12 +1534,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  serve-static@1.16.3:
+  serve-static@1.16.3(supports-color@5.5.0):
     dependencies:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       parseurl: 1.3.3
-      send: 0.19.2
+      send: 0.19.2(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
 

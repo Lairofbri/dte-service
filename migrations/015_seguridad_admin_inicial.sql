@@ -23,8 +23,9 @@ WHERE password_hash = '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lewis.Qcm7KmN.
   AND activo = TRUE;
 
 -- Auditoría de la acción
-INSERT INTO auditoria (evento, detalles, status_http)
-SELECT 'SEGURIDAD_ADMIN_INICIAL_DESACTIVADO',
+INSERT INTO auditoria (tenant_id, evento, detalles, status_http)
+SELECT u.tenant_id,
+       'SEGURIDAD_ADMIN_INICIAL_DESACTIVADO',
        json_build_object(
          'usuario_id', u.id,
          'email', u.email,

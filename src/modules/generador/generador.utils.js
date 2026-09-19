@@ -10,8 +10,8 @@ const { validarPagosContraTotal } = require('./payment.utils');
 // CATÁLOGOS OFICIALES
 // ─────────────────────────────────────────────
 const TIPOS_DTE = {
-  '01': { nombre: 'Factura',                       version: 1 },
-  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 3 },
+  '01': { nombre: 'Factura',                       version: 2 },
+  '03': { nombre: 'Comprobante de Crédito Fiscal', version: 4 },
   '05': { nombre: 'Nota de Crédito',               version: 4 },
   '06': { nombre: 'Nota de Débito',                version: 4 },
   '11': { nombre: 'Factura de Exportación',        version: 3 },

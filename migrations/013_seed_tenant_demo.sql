@@ -4,7 +4,7 @@
 -- Idempotente: puede ejecutarse múltiples veces
 -- =============================================
 
--- El UUID coincide con el del POS Backend (a0000000-...-000000000001)
+-- El UUID coincide con el tenant canónico del POS Backend.
 -- para mantener trazabilidad entre ambos sistemas
 INSERT INTO tenants (id, nombre, nit, nrc, activo, api_key_hash, encryption_key)
 VALUES (
@@ -13,7 +13,7 @@ VALUES (
   '0000-000000-000-0',
   NULL,
   TRUE,
-  '$2a$12$yDfuqFWJysci5D2.E5LJMuj1r/vpaSfDsi.RJiZLqN0mPtJBwFpYy',
+  '$2a$12$IrTzGSj5keHRKx2pm5eyT.ZzvP2BaA2XDkywVEw1MG5zlCxAwnRN6',
   '6SniMxhgR9CIzdUP3f4DHEkTaj7BOJVK'
 )
 ON CONFLICT (id) DO UPDATE SET

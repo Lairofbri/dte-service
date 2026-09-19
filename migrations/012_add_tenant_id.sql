@@ -9,6 +9,13 @@
 -- ═════════════════════════════════════════════
 -- TABLA: establecimientos
 -- ═════════════════════════════════════════════
+-- Las migraciones 001-010 crean datos antes del primer tenant demo. El
+-- placeholder permite asignarles tenant_id sin violar la FK; 013 lo reemplaza
+-- por la configuración demo real.
+INSERT INTO tenants (id, nombre, nit, activo)
+VALUES ('a0000000-0000-0000-0000-000000000002', 'Migración histórica', 'PLACEHOLDER', FALSE)
+ON CONFLICT (id) DO NOTHING;
+
 ALTER TABLE establecimientos
   ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
 

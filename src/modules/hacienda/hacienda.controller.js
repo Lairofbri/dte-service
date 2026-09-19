@@ -41,7 +41,10 @@ const manejarError = (res, err) => {
  */
 const autenticar = async (req, res) => {
   try {
-    const resultado = await service.autenticar({ forzarRenovacion: true });
+    const resultado = await service.autenticar({
+      forzarRenovacion: true,
+      tenant_id: req.tenantId,
+    });
     return exito(res, {
       autenticado: true,
       ambiente:    resultado.ambiente,
@@ -68,8 +71,8 @@ const consultarEstado = async (req, res) => {
   }
 
   // Validar tipo_dte
-  if (!tipo_dte || !['01', '03', '06', '07'].includes(tipo_dte)) {
-    return error(res, 'El parámetro tipo_dte es requerido y debe ser 01, 03, 06 o 07.', 400);
+  if (!tipo_dte || !['01', '03', '05', '06', '07', '14'].includes(tipo_dte)) {
+    return error(res, 'El parámetro tipo_dte es requerido y debe ser un tipo DTE válido.', 400);
   }
 
   try {

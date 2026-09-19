@@ -2,6 +2,36 @@
 -- NO ejecutar directamente en producción.
 -- Ejecutar primero en una base de pruebas y revisar todos los prechecks.
 
+-- 012 asignó los datos históricos al tenant placeholder 0002 antes de que
+-- existiera el tenant demo 0001. Se corrige aquí antes de validar las FKs.
+DELETE FROM correlativos legado
+USING correlativos canonico
+WHERE legado.tenant_id = 'a0000000-0000-0000-0000-000000000002'
+  AND canonico.tenant_id = 'a0000000-0000-4000-8000-000000000001'
+  AND legado.tipo_dte = canonico.tipo_dte
+  AND legado.ambiente = canonico.ambiente
+  AND legado.establecimiento_id = canonico.establecimiento_id;
+
+DO $$
+DECLARE
+  tabla RECORD;
+BEGIN
+  FOR tabla IN
+    SELECT DISTINCT table_schema, table_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND column_name = 'tenant_id'
+  LOOP
+    EXECUTE format(
+      'UPDATE %I.%I SET tenant_id = $1 WHERE tenant_id = $2',
+      tabla.table_schema,
+      tabla.table_name
+    ) USING
+      'a0000000-0000-4000-8000-000000000001'::uuid,
+      'a0000000-0000-0000-0000-000000000002'::uuid;
+  END LOOP;
+END $$;
+
 DO $$
 BEGIN
   IF EXISTS (

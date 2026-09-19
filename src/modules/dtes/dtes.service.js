@@ -579,7 +579,7 @@ const anularDTE = async ({ datos, ip }) => {
   } catch (_) {}
 
   // Generar JSON de invalidación
-  const { json: jsonInvalidacion, codigoGeneracion: codGenAnulacion } =
+  const { json: jsonInvalidacion, codigoGeneracion: codGenAnulacion, version } =
     await generadorService.generarInvalidacion({
       codigo_generacion_a_anular: codigo_generacion,
       tipo_dte:                   dte.tipo_dte,
@@ -601,7 +601,7 @@ const anularDTE = async ({ datos, ip }) => {
   // Transmitir a Hacienda
   const resultado = await haciendaService.anularDTE({
     documentoFirmado: jsonFirmado,
-    version:          2,
+     version,
     tenant_id:        datos.tenant_id,
   });
 

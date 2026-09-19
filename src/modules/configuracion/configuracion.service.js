@@ -370,6 +370,7 @@ const obtenerTokenHacienda = async ({ tenant_id } = {}) => {
 };
 
 module.exports = {
+  obtenerConfiguracion,
   obtenerConfiguracionPublica,
   obtenerCredencialesHacienda,
   obtenerTokenHacienda,

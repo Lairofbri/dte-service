@@ -12,6 +12,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { query, verificarConexion } = require('../config/database');
 const logger = require('../utils/logger');
+const { encriptar, desencriptar } = require('../config/crypto');
 
 const TENANT_ID = 'a0000000-0000-4000-8000-000000000001';
 const EST_ID_PRINCIPAL_HARD = 'b0000000-0000-4000-8000-000000000001';
@@ -32,8 +33,30 @@ if (process.env.NODE_ENV === 'production') {
 // 1. Configuracion del emisor
 // ─────────────────────────────────────────────
 const sembrarConfiguracion = async () => {
-  const { rows } = await query('SELECT id FROM configuracion WHERE tenant_id = $1', [TENANT_ID]);
+  const { rows } = await query(
+    'SELECT id, usuario_hacienda, password_hacienda FROM configuracion WHERE tenant_id = $1',
+    [TENANT_ID]
+  );
   if (rows.length > 0) {
+    const configuracion = rows[0];
+    if (configuracion.usuario_hacienda && configuracion.password_hacienda
+      && (!configuracion.usuario_hacienda.startsWith('enc:v2:')
+        || !configuracion.password_hacienda.startsWith('enc:v2:'))) {
+      const recuperar = (valor) => {
+        try {
+          return desencriptar(valor);
+        } catch {
+          return valor;
+        }
+      };
+      await query(
+        `UPDATE configuracion
+         SET usuario_hacienda = $1, password_hacienda = $2
+         WHERE id = $3`,
+        [encriptar(recuperar(configuracion.usuario_hacienda)), encriptar(recuperar(configuracion.password_hacienda)), configuracion.id]
+      );
+      logger.info('Credenciales demo de Hacienda re-cifradas');
+    }
     logger.info('Configuracion ya existe, saltando.');
     return;
   }
@@ -45,7 +68,7 @@ const sembrarConfiguracion = async () => {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,TRUE)`,
     [TENANT_ID, '0000-000000-000-0', '00000', 'Restaurante Demo', 'Restaurante Demo',
      'Av. Principal 123, San Salvador', '2200-5000', 'demo@restaurante.com',
-     '64101', 'M001', 'P001', '02', 'demo-user-hacienda', 'demo-pass-hacienda', AMBIENTE]
+     '64101', 'M001', 'P001', '02', encriptar('demo-user-hacienda'), encriptar('demo-pass-hacienda'), AMBIENTE]
   );
   logger.info('Configuracion del emisor sembrada');
 };
@@ -167,8 +190,8 @@ const sembrarClientes = async () => {
 
     for (const c of clientes) {
       await query(
-        `INSERT INTO clientes (id, tenant_id, nombre, nit, email)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+        `INSERT INTO clientes (id, tenant_id, tipo_cliente, nombre, nit, correo)
+         VALUES ($1,$2,'natural',$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
         [c.id, TENANT_ID, c.nombre, c.nit, c.email]
       );
     }
