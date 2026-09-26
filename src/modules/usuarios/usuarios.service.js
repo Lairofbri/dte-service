@@ -22,6 +22,7 @@ const BCRYPT_ROUNDS = 12;
 // ─────────────────────────────────────────────
 const formatearUsuario = (row) => ({
   id:                 row.id,
+  tenant_id:          row.tenant_id || null,
   nombre:             row.nombre,
   email:              row.email,
   rol:                row.rol,
@@ -67,6 +68,7 @@ const listarUsuarios = async ({ soloActivos = false, tenant_id } = {}) => {
   const { rows } = await query(
     `SELECT
        u.id,
+       u.tenant_id,
        u.nombre,
        u.email,
        u.rol,
@@ -101,6 +103,7 @@ const obtenerUsuario = async ({ id, tenant_id }) => {
 
   const queryText = `SELECT
        u.id,
+       u.tenant_id,
        u.nombre,
        u.email,
        u.rol,

@@ -28,6 +28,17 @@ test.describe('Auth API', () => {
     expect(res.status()).toBe(401)
   })
 
+  test('POST /api/auth/login — debe exigir tenant_id', async () => {
+    const context = await getApiContext()
+    const res = await context.post('/api/auth/login', {
+      data: {
+        email: 'gerente@demo.pos',
+        password: 'Admin123!',
+      },
+    })
+    expect(res.status()).toBe(400)
+  })
+
   test('GET /api/auth/me — debe devolver usuario autenticado', async () => {
     const context = await getAuthContext()
     const res = await context.get('/api/auth/me')
@@ -35,6 +46,7 @@ test.describe('Auth API', () => {
     const body = await res.json()
     expect(body.data).toHaveProperty('id')
     expect(body.data).toHaveProperty('email')
+    expect(body.data).toHaveProperty('tenant_id', TENANT_ID)
   })
 
   test('POST /api/auth/logout — debe cerrar sesión', async () => {

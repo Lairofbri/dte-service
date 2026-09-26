@@ -10,14 +10,14 @@
 const { Router }           = require('express');
 const controller           = require('./auditoria.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
-const { autenticarDual, soloAdministrador } = require('../../middlewares/jwt.middleware');
+const { autenticarDual, requiereAdministrador } = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
 // Auditoría: autenticación dual + solo administrador
 // Un operador no puede ver logs de toda la empresa
 router.use(autenticarDual);
-router.use(soloAdministrador);
+router.use(requiereAdministrador);
 
 // ─────────────────────────────────────────────
 // IMPORTANTE: rutas específicas ANTES de /:id

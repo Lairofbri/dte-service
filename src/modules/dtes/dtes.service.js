@@ -546,7 +546,12 @@ const anularDTE = async ({ datos, ip }) => {
   }
 
   const anularParams = [codigo_generacion.toUpperCase(), datos.tenant_id];
-  const anularFiltro = ' AND d.tenant_id = $2';
+  let anularFiltro = ' AND d.tenant_id = $2';
+
+  if (datos.establecimiento_id) {
+    anularParams.push(datos.establecimiento_id);
+    anularFiltro += ' AND d.establecimiento_id = $3';
+  }
 
   const { rows } = await query(
     `SELECT d.id, d.tipo_dte, d.codigo_generacion, d.numero_control,
@@ -608,9 +613,12 @@ const anularDTE = async ({ datos, ip }) => {
   if (resultado.estado === 'PROCESADO') {
     // Actualizar estado del DTE original a anulado — acotado al tenant
     await query(
-      `UPDATE dtes SET estado = 'anulado'
-       WHERE codigo_generacion = $1 AND tenant_id = $2`,
-      [codigo_generacion.toUpperCase(), datos.tenant_id]
+       `UPDATE dtes SET estado = 'anulado'
+        WHERE codigo_generacion = $1 AND tenant_id = $2
+          ${datos.establecimiento_id ? 'AND establecimiento_id = $3' : ''}`,
+       datos.establecimiento_id
+         ? [codigo_generacion.toUpperCase(), datos.tenant_id, datos.establecimiento_id]
+         : [codigo_generacion.toUpperCase(), datos.tenant_id]
     );
 
     await registrarAuditoria('DTE_ANULADO', dte.id, {
@@ -640,11 +648,19 @@ const anularDTE = async ({ datos, ip }) => {
 
 /**
  * Listar DTEs con filtros y paginación
- * establecimientoId: si viene del JWT filtra por establecimiento del usuario
- *                   si viene de API Key (undefined) no filtra — ve todos
+ * establecimientoId: operadores JWT filtran por establecimiento del usuario
+ *                   administradores y API Key pueden consultar el tenant completo
  */
 const listarDTEs = async ({ filtros = {}, establecimientoId, tenant_id }) => {
-  const { tipo_dte, estado, fecha_desde, fecha_hasta, pagina = 1, limite = 20 } = filtros;
+  const {
+    establecimiento_id,
+    tipo_dte,
+    estado,
+    fecha_desde,
+    fecha_hasta,
+    pagina = 1,
+    limite = 20,
+  } = filtros;
 
   // Fase 2: el tenant es obligatorio — las consultas sin tenant fallan.
   if (!tenant_id) {
@@ -658,6 +674,11 @@ const listarDTEs = async ({ filtros = {}, establecimientoId, tenant_id }) => {
   if (establecimientoId) {
     condiciones.push(`d.establecimiento_id = $${idx++}`);
     valores.push(establecimientoId);
+  }
+
+  if (establecimiento_id) {
+    condiciones.push(`d.establecimiento_id = $${idx++}`);
+    valores.push(establecimiento_id);
   }
 
   if (tipo_dte)    { condiciones.push(`d.tipo_dte = $${idx++}`);         valores.push(tipo_dte); }

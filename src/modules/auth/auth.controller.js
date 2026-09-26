@@ -17,6 +17,7 @@ const {
   errorServidor,
 } = require('../../utils/response');
 const logger = require('../../utils/logger');
+const { esUuidValido } = require('../../middlewares/uuid.middleware');
 
 // ─────────────────────────────────────────────
 // CONSTANTES DE LA COOKIE
@@ -57,11 +58,16 @@ const login = async (req, res) => {
   const { error: validacionError, value } = loginSchema.validate(req.body);
   if (validacionError) return error(res, validacionError.details[0].message, 400);
 
+  const tenantId = value.tenant_id || req.headers['x-tenant-id'];
+  if (!tenantId || typeof tenantId !== 'string' || !esUuidValido(tenantId)) {
+    return error(res, 'El tenant_id es requerido y debe ser un UUID válido.', 400);
+  }
+
   try {
     const resultado = await service.login({
       email:     value.email,
       password:  value.password,
-      tenant_id: value.tenant_id || req.headers['x-tenant-id'],
+      tenant_id: tenantId,
     });
 
     // Guardar refresh token en httpOnly cookie
@@ -99,7 +105,7 @@ const refresh = async (req, res) => {
     const resultado = await service.refresh({ refreshToken });
 
     // Renovar la cookie también
-    res.cookie(COOKIE_NOMBRE, refreshToken, COOKIE_OPCIONES);
+    res.cookie(COOKIE_NOMBRE, resultado.refresh_token, COOKIE_OPCIONES);
 
     return exito(res, resultado, 'Token renovado exitosamente.');
   } catch (err) {
@@ -141,7 +147,10 @@ const logout = async (req, res) => {
  */
 const me = async (req, res) => {
   try {
-    const usuario = await service.me({ usuarioId: req.usuario.id });
+    const usuario = await service.me({
+      usuarioId: req.usuario.id,
+      tenant_id: req.usuario.tenant_id,
+    });
     return exito(res, usuario);
   } catch (err) {
     return manejarError(res, err);

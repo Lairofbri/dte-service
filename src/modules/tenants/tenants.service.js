@@ -4,8 +4,7 @@ const listarActivos = async () => {
   const { rows } = await query(
     `SELECT
        t.id,
-       t.nombre,
-       t.nit
+       t.nombre
      FROM tenants t
      WHERE t.activo = TRUE
      ORDER BY t.nombre`

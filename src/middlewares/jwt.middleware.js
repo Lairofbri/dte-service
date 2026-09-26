@@ -22,6 +22,11 @@ const autenticarJWT = (req, res, next) => {
       return noAutenticado(res, 'Token sin tenant. Inicia sesión nuevamente.');
     }
 
+    if (!payload.establecimiento_id) {
+      logger.warn('Token sin establecimiento_id — conexión rechazada', { ip: req.ip, ruta: req.path });
+      return noAutenticado(res, 'Token sin establecimiento. Inicia sesión nuevamente.');
+    }
+
     req.usuario = {
       id:                 payload.sub,
       email:              payload.email,

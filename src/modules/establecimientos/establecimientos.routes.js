@@ -7,14 +7,14 @@
 const { Router }           = require('express');
 const controller           = require('./establecimientos.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
-const { autenticarDual, soloAdministrador } = require('../../middlewares/jwt.middleware');
+const { autenticarDual, requiereAdministrador } = require('../../middlewares/jwt.middleware');
 
 const router = Router();
 
 // Establecimientos: autenticación dual + solo administrador
 // Solo el admin puede gestionar sucursales
 router.use(autenticarDual);
-router.use(soloAdministrador);
+router.use(requiereAdministrador);
 
 // ─────────────────────────────────────────────
 // RUTAS

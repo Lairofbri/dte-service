@@ -190,7 +190,13 @@ const anularDTE = async (req, res) => {
 
   try {
     const resultado = await service.anularDTE({
-      datos: { ...value, tenant_id: obtenerTenantAutenticado(req) },
+      datos: {
+        ...value,
+        tenant_id: obtenerTenantAutenticado(req),
+        establecimiento_id: req.usuario?.rol === 'administrador'
+          ? null
+          : req.usuario?.establecimiento_id || null,
+      },
       ip: req.ip,
     });
     return exito(res, resultado, 'DTE anulado exitosamente.');
@@ -227,7 +233,12 @@ const listarDTEs = async (req, res) => {
     // Si es JWT → filtra por establecimiento del usuario
     // Si es API Key → sin filtro (el POS es de confianza)
     const resultado = await service.listarDTEs({
-      filtros,
+      filtros: {
+        ...filtros,
+        establecimiento_id: req.usuario?.rol === 'administrador'
+          ? filtros.establecimiento_id
+          : undefined,
+      },
       establecimientoId: req.establecimientoId,
       tenant_id: req.usuario?.tenant_id || req.tenantId,
     });

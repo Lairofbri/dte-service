@@ -19,6 +19,9 @@ const codEstableRegex = /^[A-Z0-9]{4}$/;
  * cod_estable_mh y cod_punto_venta_mh vienen del documento de Hacienda
  */
 const crearEstablecimientoSchema = Joi.object({
+  tipo_establecimiento: Joi.string().valid('01', '02', '04', '07').default('02').messages({
+    'any.only': 'El tipo de establecimiento no es válido según CAT-009.',
+  }),
   // ── Códigos de Hacienda — vienen del documento de acreditamiento ──
   cod_estable_mh: Joi.string()
     .uppercase()
@@ -97,6 +100,9 @@ const crearEstablecimientoSchema = Joi.object({
  * Todos los campos opcionales — mínimo uno
  */
 const actualizarEstablecimientoSchema = Joi.object({
+  tipo_establecimiento: Joi.string().valid('01', '02', '04', '07').optional().messages({
+    'any.only': 'El tipo de establecimiento no es válido según CAT-009.',
+  }),
   // cod_estable_mh se puede intentar actualizar
   // pero el service lo rechazará si tiene DTEs emitidos
   cod_estable_mh: Joi.string()

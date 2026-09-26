@@ -210,6 +210,9 @@ const anularDTESchema = Joi.object({
 });
 
 const filtrosDTESchema = Joi.object({
+  establecimiento_id: Joi.string().uuid().optional().messages({
+    'string.guid': 'El establecimiento_id debe ser un UUID válido.',
+  }),
   tipo_dte:    Joi.string().valid('01','03','04','05','06','07','08','09','11','14','15').optional(),
   estado:      Joi.string().valid('generado','firmado','transmitido','aceptado','rechazado','contingencia','anulado').optional(),
   fecha_desde: Joi.date().iso().optional(),

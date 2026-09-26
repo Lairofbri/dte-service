@@ -26,6 +26,8 @@ const formatearEstablecimiento = (row) => ({
   municipio_cod:      row.municipio_cod,
   telefono:           row.telefono    || null,
   email:              row.email       || null,
+  correo:             row.correo      || null,
+  tipo_establecimiento: row.tipo_establecimiento || '02',
   activo:             row.activo,
   total_dtes:         parseInt(row.total_dtes || 0, 10),
   creado_en:          row.creado_en,
@@ -69,6 +71,8 @@ const listarEstablecimientos = async ({ soloActivos = false, tenant_id } = {}) =
        e.municipio_cod,
        e.telefono,
        e.email,
+       e.correo,
+       e.tipo_establecimiento,
        e.activo,
        e.creado_en,
        e.actualizado_en,
@@ -106,6 +110,8 @@ const obtenerEstablecimiento = async ({ id, tenant_id }) => {
        e.municipio_cod,
        e.telefono,
        e.email,
+       e.correo,
+       e.tipo_establecimiento,
        e.activo,
        e.creado_en,
        e.actualizado_en,
@@ -140,7 +146,7 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
     cod_estable, cod_punto_venta,
     nombre, direccion,
     departamento_cod, municipio_cod,
-    telefono, email,
+    telefono, email, correo, tipo_establecimiento,
   } = datos;
 
   // Verificar que la combinación cod_estable_mh + cod_punto_venta_mh
@@ -165,14 +171,15 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
       'cod_estable', 'cod_punto_venta',
       'nombre', 'direccion',
       'departamento_cod', 'municipio_cod',
-      'telefono', 'email',
+      'telefono', 'email', 'correo', 'tipo_establecimiento',
       'tenant_id',
     ];
     const valoresEst = [
       cod_estable_mh, cod_punto_venta_mh,
       cod_estable || cod_estable_mh, cod_punto_venta || cod_punto_venta_mh,
       nombre, direccion, departamento_cod, municipio_cod,
-      telefono || null, email || null,
+      telefono || null, email || null, correo || email || null,
+      tipo_establecimiento || '02',
       tenant_id,
     ];
 
@@ -185,7 +192,7 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
          cod_estable, cod_punto_venta,
          nombre, direccion,
          departamento_cod, municipio_cod,
-         telefono, email,
+         telefono, email, correo, tipo_establecimiento,
          activo, creado_en, actualizado_en`,
       valoresEst
     );
@@ -235,8 +242,9 @@ const crearEstablecimiento = async ({ datos, tenant_id }) => {
 const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
   await obtenerEstablecimiento({ id, tenant_id });
 
-  // Si intenta cambiar cod_estable_mh — verificar que no tiene DTEs
-  if (datos.cod_estable_mh) {
+  // Los códigos MH forman parte del número de control y no pueden cambiar
+  // después de emitir el primer DTE del establecimiento.
+  if (datos.cod_estable_mh || datos.cod_punto_venta_mh) {
     const { rows: dtesExistentes } = await query(
       'SELECT COUNT(*) AS total FROM dtes WHERE establecimiento_id = $1 AND tenant_id = $2',
       [id, tenant_id]
@@ -249,15 +257,18 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
       };
     }
 
-    // Verificar que el nuevo cod_estable_mh no existe en otro establecimiento del mismo tenant
+    // Verificar que la nueva combinación fiscal no existe en otro registro.
     const { rows: existeOtro } = await query(
-      'SELECT id FROM establecimientos WHERE cod_estable_mh = $1 AND id != $2 AND tenant_id = $3',
-      [datos.cod_estable_mh, id, tenant_id]
+      `SELECT id FROM establecimientos
+       WHERE cod_estable_mh = COALESCE($1, cod_estable_mh)
+         AND cod_punto_venta_mh = COALESCE($2, cod_punto_venta_mh)
+         AND id != $3 AND tenant_id = $4`,
+      [datos.cod_estable_mh || null, datos.cod_punto_venta_mh || null, id, tenant_id]
     );
     if (existeOtro.length > 0) {
       throw {
         status:  409,
-        mensaje: `Ya existe otro establecimiento con el código ${datos.cod_estable_mh} de Hacienda.`,
+          mensaje: 'Ya existe otro establecimiento con esa combinación de códigos de Hacienda.',
       };
     }
   }
@@ -269,7 +280,7 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
     'cod_estable', 'cod_punto_venta',
     'nombre', 'direccion',
     'departamento_cod', 'municipio_cod',
-    'telefono', 'email',
+    'telefono', 'email', 'correo', 'tipo_establecimiento',
     'activo', // permite activar y desactivar desde PATCH
   ];
 
@@ -302,7 +313,7 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
        cod_estable, cod_punto_venta,
        nombre, direccion,
        departamento_cod, municipio_cod,
-       telefono, email,
+       telefono, email, correo, tipo_establecimiento,
        activo, creado_en, actualizado_en`,
     valores
   );

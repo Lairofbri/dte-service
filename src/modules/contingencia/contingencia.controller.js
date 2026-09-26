@@ -17,6 +17,12 @@ const {
 } = require('../../utils/response');
 const logger = require('../../utils/logger');
 
+const obtenerEstablecimientoAutorizado = (req) => (
+  req.usuario?.rol === 'administrador'
+    ? null
+    : req.usuario?.establecimiento_id || null
+);
+
 // ─────────────────────────────────────────────
 // Helper: manejo de errores
 // ─────────────────────────────────────────────
@@ -42,7 +48,7 @@ const obtenerPendientes = async (req, res) => {
   try {
     const resultado = await service.obtenerDTEsEnContingencia({
       tenant_id: req.tenantId || req.usuario?.tenant_id,
-      establecimiento_id: req.establecimientoId || req.usuario?.establecimiento_id || null,
+      establecimiento_id: obtenerEstablecimientoAutorizado(req),
     });
     return exito(res, resultado);
   } catch (err) {
@@ -68,7 +74,7 @@ const notificarContingencia = async (req, res) => {
       datos:       {
         ...datos,
         tenant_id: req.tenantId || req.usuario?.tenant_id || null,
-        establecimiento_id: req.establecimientoId || req.usuario?.establecimiento_id || null,
+        establecimiento_id: obtenerEstablecimientoAutorizado(req),
       },
       passwordPri: password_pri,
       ip:          req.ip,
@@ -97,7 +103,7 @@ const consultarLote = async (req, res) => {
     const resultado = await service.consultarLote({
       codigoLote,
       tenant_id: req.tenantId || req.usuario?.tenant_id || null,
-      establecimiento_id: req.establecimientoId || req.usuario?.establecimiento_id || null,
+      establecimiento_id: obtenerEstablecimientoAutorizado(req),
     });
     return exito(res, resultado);
   } catch (err) {

@@ -279,8 +279,8 @@ const logout = async ({ refreshToken }) => {
  * Obtener datos del usuario actual
  * JWT ya verificado por middleware autenticarJWT
  */
-const me = async ({ usuarioId }) => {
-  return await usuariosService.obtenerUsuario({ id: usuarioId });
+const me = async ({ usuarioId, tenant_id }) => {
+  return await usuariosService.obtenerUsuario({ id: usuarioId, tenant_id });
 };
 
 module.exports = {

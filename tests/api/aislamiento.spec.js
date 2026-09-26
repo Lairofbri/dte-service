@@ -75,7 +75,13 @@ test.describe('Aislamiento multi-tenant (Fase 2)', () => {
   test('configuración inexistente para tenant ficticio devuelve 404', async () => {
     const jwt = require('jsonwebtoken')
     const token = jwt.sign(
-      { sub: 'u1', rol: 'administrador', tenant_id: TENANT_B, email: 'x@b.pos' },
+      {
+        sub: 'u1',
+        rol: 'administrador',
+        tenant_id: TENANT_B,
+        establecimiento_id: 'b0000000-0000-4000-8000-000000000002',
+        email: 'x@b.pos',
+      },
       process.env.JWT_SECRET || 'x'.repeat(64),
       { expiresIn: '1h' }
     )

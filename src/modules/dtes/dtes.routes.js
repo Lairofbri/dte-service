@@ -17,12 +17,12 @@ const router = Router();
 // Autenticación dual — API Key o JWT
 router.use(autenticarDual);
 
-// Middleware de scoping por establecimiento para JWT
-// Si el request viene con JWT, inyecta el establecimiento_id del token
-// en req.establecimientoId para que el controller lo use
-// Si viene con API Key, req.establecimientoId queda undefined (sin filtro)
+// Middleware de scoping por establecimiento para JWT de operadores.
+// Los administradores conservan alcance tenant-wide para consultas; la
+// emisión continúa forzada al establecimiento fijo del JWT en el controller.
+// Si viene con API Key, req.establecimientoId queda undefined (sin filtro).
 router.use((req, res, next) => {
-  if (req.usuario?.establecimiento_id) {
+  if (req.usuario?.rol !== 'administrador' && req.usuario?.establecimiento_id) {
     req.establecimientoId = req.usuario.establecimiento_id;
   }
   next();
