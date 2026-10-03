@@ -3,7 +3,12 @@ const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const { obtenerSchemaDte } = require('./dte-schema-registry');
 
-const ajv = new Ajv({ allErrors: true, strict: false });
+// multipleOfPrecision: corrige el falso negativo de ajv con `multipleOf` decimal
+// (p.ej. 0.29 no pasa `multipleOf: 0.01` por representación binaria, pero es un
+// valor válido). Se usa una tolerancia relativa (1e-6) sobre el cociente, que
+// sigue rechazando valores que no son múltiplos reales (p.ej. 0.2875 con 0.01).
+// El esquema oficial NO se modifica; solo se ajusta el motor de validación local.
+const ajv = new Ajv({ allErrors: true, strict: false, multipleOfPrecision: 6 });
 addFormats(ajv);
 
 const validadores = new Map();

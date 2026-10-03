@@ -105,6 +105,18 @@ const camposPagoComunes = {
   // Fase 3 — clave idempotente (tenant + orden + tipo). Los reintentos
   // reutilizan el mismo DTE en lugar de generar un nuevo correlativo.
   idempotency_key:      Joi.string().max(100).optional().allow('', null),
+  // Fase 5 — selección fiscal por establecimiento (API Key/POS).
+  // establecimiento_id es la autoridad; branch_id debe corresponder al
+  // establecimiento; los códigos MH se aceptan solo como verificación,
+  // NUNCA como fuente de selección (spec §9).
+  establecimiento_id:   Joi.string().uuid().optional().messages({
+    'string.guid': 'El establecimiento_id debe ser un UUID válido.',
+  }),
+  branch_id:            Joi.string().uuid().optional().messages({
+    'string.guid': 'El branch_id debe ser un UUID válido.',
+  }),
+  cod_estable_mh:       Joi.string().max(10).optional().allow('', null),
+  cod_punto_venta_mh:   Joi.string().max(10).optional().allow('', null),
   // Opcional: si no se envía, la credencial se obtiene del proveedor seguro
   // de firma (nunca desde la BD). El POS no debe enviarla.
   password_pri:         Joi.string().min(1).optional().messages({
@@ -189,6 +201,12 @@ const anularDTESchema = Joi.object({
   codigo_generacion:    Joi.string().uuid().required().messages({
     'any.required': 'El código de generación del DTE a anular es requerido.',
     'string.uuid':  'El código de generación debe ser un UUID válido.',
+  }),
+  tipo_dte: Joi.string().valid('01','03','04','05','06','07','08','09','11','14','15').optional().allow('', null),
+  // Fase 5 — el emisor API Key (POS) acota la anulación al establecimiento
+  // original del DTE; el JWT ya resuelve el establecimiento del operador.
+  establecimiento_id: Joi.string().uuid().optional().messages({
+    'string.guid': 'El establecimiento_id debe ser un UUID válido.',
   }),
   motivo_tipo: Joi.number().integer().valid(1, 2, 3).required().messages({
     'any.required': 'El tipo de anulación es requerido (1=Error datos, 2=Rescindir, 3=Otro).',

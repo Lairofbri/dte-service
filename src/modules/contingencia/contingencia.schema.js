@@ -90,6 +90,13 @@ const notificarContingenciaSchema = Joi.object({
     'any.required': 'El número de documento del responsable es requerido.',
   }),
 
+  // ── Fase 5 — acotar la contingencia a un establecimiento ──
+  // JWT: el operador usa su establecimiento fijo (se ignora el body).
+  // API Key (POS): el establecimiento de los DTEs se envía en el body.
+  establecimiento_id: Joi.string().uuid().optional().messages({
+    'string.guid': 'El establecimiento_id debe ser un UUID válido.',
+  }),
+
   // ── passwordPri — contraseña del certificado para firmar el evento ──
   // NUNCA se almacena. Opcional: si no se envía, se obtiene del proveedor
   // seguro de firma (nunca desde la BD).

@@ -5,6 +5,7 @@
 const app    = require('./app');
 const { PORT, AMBIENTE_HACIENDA } = require('./config/env');
 const { verificarConexion } = require('./config/database');
+const { iniciarWorker } = require('./modules/provisioning/outbox.service');
 const logger = require('./utils/logger');
 
 const arrancar = async () => {
@@ -32,6 +33,9 @@ const arrancar = async () => {
         logger.info('ℹ️  Ambiente de pruebas — Los DTEs NO tienen validez legal');
       }
     });
+
+    // Worker de outbox de provisión (Fase 2) — entrega eventos al POS.
+    iniciarWorker();
 
     // Graceful shutdown
     const cerrar = async (senal) => {

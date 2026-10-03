@@ -44,10 +44,10 @@ const crearUsuarioSchema = Joi.object({
       'any.required':        'El password es requerido.',
     }),
   rol: Joi.string()
-    .valid('administrador', 'operador')
+    .valid('administrador', 'operador', 'plataforma')
     .required()
     .messages({
-      'any.only':     'El rol debe ser administrador u operador.',
+      'any.only':     'El rol debe ser administrador, operador o plataforma.',
       'any.required': 'El rol es requerido.',
     }),
   establecimiento_id: Joi.string()
@@ -85,10 +85,10 @@ const actualizarUsuarioSchema = Joi.object({
       'string.pattern.base': 'El password debe tener entre 8 y 50 caracteres, al menos una mayúscula, una minúscula, un número y un carácter especial.',
     }),
   rol: Joi.string()
-    .valid('administrador', 'operador')
+    .valid('administrador', 'operador', 'plataforma')
     .optional()
     .messages({
-      'any.only': 'El rol debe ser administrador u operador.',
+      'any.only': 'El rol debe ser administrador, operador o plataforma.',
     }),
   establecimiento_id: Joi.string()
     .uuid()

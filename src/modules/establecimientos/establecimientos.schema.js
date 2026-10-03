@@ -19,6 +19,11 @@ const codEstableRegex = /^[A-Z0-9]{4}$/;
  * cod_estable_mh y cod_punto_venta_mh vienen del documento de Hacienda
  */
 const crearEstablecimientoSchema = Joi.object({
+  // Fase 3 (spec §6.4): si el alta viene desde DTE, se puede indicar el
+  // branch_id compartido; si no, DTE lo asigna (el evento crea la sucursal POS).
+  branch_id: Joi.string().uuid().optional().messages({
+    'string.guid': 'branch_id debe ser un UUID v4 válido.',
+  }),
   tipo_establecimiento: Joi.string().valid('01', '02', '04', '07').default('02').messages({
     'any.only': 'El tipo de establecimiento no es válido según CAT-009.',
   }),

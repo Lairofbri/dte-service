@@ -13,6 +13,7 @@ const { noEncontrado, errorServidor } = require('./utils/response');
 
 // ── Importar rutas ──
 const configuracionRoutes = require('./modules/configuracion/configuracion.routes');
+const catalogosRoutes    = require('./modules/catalogos/catalogos.routes');
 const dteRoutes           = require('./modules/dtes/dtes.routes');
 const contingenciaRoutes  = require('./modules/contingencia/contingencia.routes');
 const auditoriaRoutes     = require('./modules/auditoria/auditoria.routes');
@@ -23,6 +24,7 @@ const usuariosRoutes          = require('./modules/usuarios/usuarios.routes');
 const authRoutes              = require('./modules/auth/auth.routes');
 const clientesRoutes          = require('./modules/clientes/clientes.routes');
 const tenantsRoutes           = require('./modules/tenants/tenants.routes');
+const { routerInterno, routerApi } = require('./modules/provisioning/provisioning.routes');
 
 const app = express();
 
@@ -120,6 +122,7 @@ app.use('/api/tenants',       tenantsRoutes);
 app.use('/api/clientes',      clientesRoutes);
 
 app.use('/api/configuracion', configuracionRoutes);
+app.use('/api/catalogos',     catalogosRoutes);
 app.use('/api/dte',           limiteDTE, dteRoutes);
 app.use('/api/contingencia',  contingenciaRoutes);
 app.use('/api/auditoria',     auditoriaRoutes);
@@ -127,6 +130,10 @@ app.use('/api/hacienda',         haciendaRoutes);
 app.use('/api/firmador',         firmadorRoutes);
 app.use('/api/establecimientos', establecimientosRoutes);
 app.use('/api/usuarios',         usuariosRoutes);
+
+// Provisión (Fase 2) — rutas internas servidor-a-servidor + API de plataforma
+app.use('/internal/provisioning', routerInterno);
+app.use('/api/provisioning',      routerApi);
 
 // ─────────────────────────────────────────────
 // 404 — Ruta no encontrada

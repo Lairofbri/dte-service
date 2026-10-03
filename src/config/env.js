@@ -72,6 +72,9 @@ module.exports = {
   URL_FIRMADOR:     requerida('URL_FIRMADOR'),
   TIMEOUT_FIRMADOR: opcionalInt('TIMEOUT_FIRMADOR', 10000),
   FIRMADOR_API_KEY: opcional('FIRMADOR_API_KEY'),
+  // Token Bearer para el firmador remoto (Authorization: Bearer <token>).
+  // Lo provee el operador del servicio de firma (ej: firmador.cuscatec.com).
+  FIRMADOR_TOKEN: opcional('FIRMADOR_TOKEN'),
   // Contraseña de la llave privada del certificado de firma.
   // NUNCA se persiste en BD. Se inyecta en runtime (env o Secret Manager).
   // Se lee exclusivamente dentro de la operación de firma.
@@ -106,6 +109,16 @@ JWT_SECRET: (() => {
   CORS_ORIGINS: (opcional('CORS_ORIGINS', 'http://localhost:3000'))
     .split(',')
     .map((o) => o.trim()),
+
+  // ── Provisión interna POS ↔ DTE (Fase 2) ──
+  // Clave interna servidor-a-servidor para /internal/provisioning/*.
+  // DISTINTA de la API Key técnica del POS. Sin ella las rutas internas
+  // fallan cerradas (503) — nunca se habilitan sin credencial.
+  INTERNAL_API_KEY: process.env.INTERNAL_API_KEY || null,
+  // URL y clave de salida para publicar eventos de provisión hacia el POS
+  // (outbox). Si POS_PROVISIONING_URL no está configurada, el worker no corre.
+  POS_PROVISIONING_URL: process.env.POS_PROVISIONING_URL || null,
+  POS_PROVISIONING_API_KEY: process.env.POS_PROVISIONING_API_KEY || null,
 
   // Logs
   LOG_LEVEL: opcional('LOG_LEVEL', 'info'),

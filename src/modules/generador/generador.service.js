@@ -29,7 +29,9 @@ const {
 
 // ─────────────────────────────────────────────
 // HELPER: obtener config + establecimiento del usuario
-// El establecimiento del usuario determina los códigos MH del emisor
+// El establecimiento determina los códigos MH del emisor.
+// Fase 5 — el establecimiento es la autoridad (spec §9); los códigos MH
+// del body ya NO seleccionan establecimiento, solo se verifican.
 // ─────────────────────────────────────────────
 const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
   const tenant_id = datos.tenant_id;
@@ -39,31 +41,26 @@ const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
 
   const config = await configuracionService.obtenerConfiguracion({ tenant_id });
 
-  // Si no hay establecimientoId (API Key), buscar por códigos MH del body
-  // PERO siempre acotado al tenant autenticado — nunca global.
-  if (!establecimientoId) {
-    if (datos.cod_estable_mh && datos.cod_punto_venta_mh) {
-      const { query } = require('../../config/database');
-      const { rows: estRows } = await query(
-        `SELECT id FROM establecimientos
-         WHERE cod_estable_mh = $1 AND cod_punto_venta_mh = $2
-           AND tenant_id = $3 AND activo = true`,
-        [datos.cod_estable_mh, datos.cod_punto_venta_mh, tenant_id]
-      );
-      if (estRows.length > 0) {
-        establecimientoId = estRows[0].id;
-      }
-    }
+  // Los esquemas oficiales exigen descActividad (emisor) con minLength 5.
+  // Fail-closed: sin actividad económica configurada no se emite (spec §9).
+  if (!config.desc_actividad || String(config.desc_actividad).trim().length < 5) {
+    throw {
+      status: 400,
+      mensaje: 'La actividad económica del contribuyente (desc_actividad) es obligatoria (mínimo 5 caracteres) para emitir DTEs. Configúrela en la administración del tenant.',
+    };
+  }
 
-    if (!establecimientoId) {
-      throw { status: 400, mensaje: 'Se requiere el establecimiento del usuario para emitir DTEs.' };
-    }
+  // Sin establecimiento (JWT o body) no se emite: los códigos MH del tenant
+  // no son una fuente de selección válida.
+  if (!establecimientoId) {
+    throw { status: 400, mensaje: 'Se requiere el establecimiento del usuario para emitir DTEs.' };
   }
 
   const { query } = require('../../config/database');
   const { rows } = await query(
     `SELECT id, nombre, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta,
-            tipo_establecimiento, departamento_cod, municipio_cod, direccion, telefono, correo
+            tipo_establecimiento, departamento_cod, municipio_cod, direccion, telefono, correo,
+            branch_id, fiscal_status
      FROM establecimientos
      WHERE id = $1 AND tenant_id = $2 AND activo = true`,
     [establecimientoId, tenant_id]
@@ -73,7 +70,51 @@ const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
     throw { status: 404, mensaje: 'Establecimiento no encontrado o inactivo para este tenant.' };
   }
 
-  return { config, establecimiento: rows[0] };
+  const establecimiento = rows[0];
+  verificarSeleccionEstablecimiento({ establecimiento, datos });
+
+  return { config, establecimiento };
+};
+
+// ─────────────────────────────────────────────
+// Fase 5 — verificación de la selección fiscal (spec §9):
+// - Solo establecimientos 'ready' y activos pueden emitir.
+// - branch_id del request debe corresponder al establecimiento.
+// - Los códigos MH del request son verificación, nunca autoridad.
+// Función pura exportada para tests.
+// ─────────────────────────────────────────────
+const verificarSeleccionEstablecimiento = ({ establecimiento, datos = {} }) => {
+  if (!establecimiento) {
+    throw { status: 409, mensaje: 'No se pudo resolver el establecimiento fiscal.' };
+  }
+
+  if (establecimiento.fiscal_status !== 'ready') {
+    throw {
+      status: 409,
+      mensaje: `El establecimiento no está listo para emitir (estado: ${establecimiento.fiscal_status || 'sin_estado'}). Complete los datos fiscales antes de emitir.`,
+    };
+  }
+
+  if (datos.branch_id && establecimiento.branch_id !== datos.branch_id) {
+    throw {
+      status: 409,
+      mensaje: 'El branch_id no corresponde al establecimiento del tenant autenticado.',
+    };
+  }
+
+  if (datos.cod_estable_mh && establecimiento.cod_estable_mh !== datos.cod_estable_mh) {
+    throw {
+      status: 409,
+      mensaje: 'El código de establecimiento MH no coincide con el establecimiento resuelto.',
+    };
+  }
+
+  if (datos.cod_punto_venta_mh && establecimiento.cod_punto_venta_mh !== datos.cod_punto_venta_mh) {
+    throw {
+      status: 409,
+      mensaje: 'El código de punto de venta MH no coincide con el establecimiento resuelto.',
+    };
+  }
 };
 
 // ─────────────────────────────────────────────
@@ -298,7 +339,7 @@ const generarFSE = async (datos) => {
         motivoContingencia: datos.motivo_contingencia || null,
       }),
       apendice:        null,
-      emisor:          construirEmisor(config, establecimiento),
+      emisor:          construirEmisorPorTipo(config, establecimiento, tipoDte),
       receptor:        construirReceptorFSE(datos.receptor),
       cuerpoDocumento,
       resumen,
@@ -350,12 +391,6 @@ const generarNotaCredito = async (datos) => {
 
     const condicion = datos.condicion_operacion || 1;
     const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null);
-
-    if (!datos.pagos) {
-      resumen.pagos = construirPagos(
-        datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, resumen.totalPagar
-      );
-    }
 
     const docsRel = construirDocumentoRelacionado([datos.documento_relacionado]);
 
@@ -423,12 +458,6 @@ const generarNotaDebito = async (datos) => {
     const condicion = datos.condicion_operacion || 1;
     const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null);
 
-    if (!datos.pagos) {
-      resumen.pagos = construirPagos(
-        datos.metodo_pago, datos.monto_efectivo || 0, datos.monto_tarjeta || 0, resumen.totalPagar
-      );
-    }
-
     const docsRel = construirDocumentoRelacionado([datos.documento_relacionado]);
 
     const json = {
@@ -480,6 +509,8 @@ const generarInvalidacion = async (datos) => {
   const { fecEmi: fecAnula, horEmi: horAnula } = getFechaHoraEmision();
 
   // Obtener el establecimiento del DTE a anular — SIEMPRE dentro del tenant autenticado
+  // Fase 5 — el establecimiento original del DTE es la única fuente; no se usa
+  // config del tenant como fallback (spec §9). Si no se resuelve, se falla en claro.
   const { query } = require('../../config/database');
   let establecimiento = null;
   try {
@@ -493,6 +524,13 @@ const generarInvalidacion = async (datos) => {
     );
     if (rows.length > 0) establecimiento = rows[0];
   } catch (_) {}
+
+  if (!establecimiento) {
+    throw {
+      status: 409,
+      mensaje: 'No se pudo resolver el establecimiento original del DTE a anular.',
+    };
+  }
 
   const json = {
     identificacion: {
@@ -509,9 +547,9 @@ const generarInvalidacion = async (datos) => {
       tipoEstablecimiento: establecimiento?.tipo_establecimiento || config.tipo_establecimiento || '02',
       telefono:            establecimiento?.telefono || config.telefono || '00000000',
       correo:              establecimiento?.correo   || config.correo || config.email || '',
-      codEstableMH:        establecimiento?.cod_estable_mh      || config.codigo_establecimiento || '0001',
+      codEstableMH:        establecimiento?.cod_estable_mh || null,
       codEstable:          establecimiento?.cod_estable          || null,
-      codPuntoVentaMH:     establecimiento?.cod_punto_venta_mh   || config.codigo_punto_venta    || '0001',
+      codPuntoVentaMH:     establecimiento?.cod_punto_venta_mh   || null,
       codPuntoVenta:       establecimiento?.cod_punto_venta       || null,
       nomEstablecimiento:  config.nombre_comercial || config.nombre,
     },
@@ -557,5 +595,6 @@ module.exports = {
   generarNotaCredito,
   generarNotaDebito,
   generarInvalidacion,
+  verificarSeleccionEstablecimiento,
   TIPOS_DTE,
 };

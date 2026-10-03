@@ -28,4 +28,7 @@ router.patch('/', requiereAdministrador, controller.actualizarConfiguracion);
 // POST /api/configuracion/test-hacienda — probar conexión con Hacienda (solo administrador)
 router.post('/test-hacienda', requiereAdministrador, controller.testHacienda);
 
+// GET /api/configuracion/estado-firma — estado de certificado/firma por tenant (solo administrador)
+router.get('/estado-firma', requiereAdministrador, controller.obtenerEstadoFirma);
+
 module.exports = router;

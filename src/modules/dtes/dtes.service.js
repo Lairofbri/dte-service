@@ -316,6 +316,7 @@ const emitirDTE = async ({ generarFn, datos, passwordPri, tenant_id, ip, idempot
         establecimientoId: datos.establecimiento_id || null,
         condicionOperacion: resumen.condicionOperacion || 1,
         clienteId:         datos.cliente_id         || null,
+        tenant_id,
         idempotencyKey:    idempotencyKey           || null,
       });
     } catch (err) {

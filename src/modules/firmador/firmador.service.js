@@ -14,11 +14,12 @@ const {
   URL_FIRMADOR,
   TIMEOUT_FIRMADOR,
   FIRMADOR_API_KEY,
+  FIRMADOR_TOKEN,
 } = require('../../config/env');
 // NIT se lee de la BD — la única fuente de verdad del emisor
 // No del env — permite vender a múltiples clientes sin cambiar variables
 const configuracionService = require('../configuracion/configuracion.service');
-const { obtenerPasswordFirma } = require('./credenciales.service');
+const { obtenerPasswordFirma, hayCredencialFirma } = require('./credenciales.service');
 const logger = require('../../utils/logger');
 const { esJwt } = require('../integracion/integracion.utils');
 
@@ -31,6 +32,8 @@ const clienteFirmador = axios.create({
       headers: {
         'Content-Type': 'application/json',
         ...(FIRMADOR_API_KEY ? { 'X-Firmador-Key': FIRMADOR_API_KEY } : {}),
+        // Firmador remoto: autenticación con Bearer token provisto por el operador.
+        ...(FIRMADOR_TOKEN ? { 'Authorization': `Bearer ${FIRMADOR_TOKEN}` } : {}),
       },
 });
 
@@ -206,6 +209,33 @@ const verificarFirmador = async () => {
 // ─────────────────────────────────────────────
 
 /**
+ * Estado de certificado/firma disponible para un tenant (Fase 4).
+ *
+ * NUNCA expone secretos (passwordPri, certificado) — solo señales operativas:
+ * - firmador_disponible: el servicio de firma responde (health check global).
+ * - credencial_firma_disponible: existe secreto de firma para el tenant
+ *   (FIRMADOR_PASSWORD_PRI_<tenant_id> o global) — spec §3.3.
+ * - estado: 'listo' | 'firmador_offline' | 'sin_credencial'.
+ */
+const obtenerEstadoFirmaTenant = async ({ tenant_id, nit = null }) => {
+  const firmador = await verificarFirmador();
+  const credencialDisponible = hayCredencialFirma({ tenant_id });
+
+  let estado;
+  if (!firmador.disponible) estado = 'firmador_offline';
+  else if (!credencialDisponible) estado = 'sin_credencial';
+  else estado = 'listo';
+
+  return {
+    tenant_id: tenant_id || null,
+    nit: nit || null,
+    estado,
+    firmador_disponible: firmador.disponible,
+    credencial_firma_disponible: credencialDisponible,
+  };
+};
+
+/**
  * Parsea los errores del firmador para dar mensajes útiles
  * Basado en los códigos de error del manual
  */
@@ -228,4 +258,7 @@ const parsearErrorFirmador = (data) => {
 module.exports = {
   firmarDTE,
   verificarFirmador,
+  obtenerEstadoFirmaTenant,
+  // Exportado para tests unitarios (headers de autenticación).
+  clienteFirmador,
 };

@@ -104,10 +104,27 @@ const requiereTenant = (req, res, next) => {
   next();
 };
 
+/**
+ * Requiere un JWT válido de rol plataforma (onboarding).
+ * Es el rol separado que permite operaciones de provisión/alta de empresas.
+ * Un administrador o operador normal NO puede realizar onboarding.
+ * Solo usuarios con JWT (nunca API Key de integración) pueden pasar.
+ */
+const requierePlataforma = (req, res, next) => {
+  if (!req.usuario || !req.usuario.tenant_id) {
+    return noAutenticado(res, 'Autenticación de usuario requerida.');
+  }
+  if (req.usuario.rol !== 'plataforma') {
+    return sinPermiso(res, 'Solo usuarios de plataforma pueden realizar esta acción.');
+  }
+  next();
+};
+
 module.exports = {
   autenticarJWT,
   soloAdministrador,
   requiereAdministrador,
   autenticarDual,
   requiereTenant,
+  requierePlataforma,
 };

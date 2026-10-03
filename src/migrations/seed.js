@@ -63,12 +63,13 @@ const sembrarConfiguracion = async () => {
 
   await query(
     `INSERT INTO configuracion (tenant_id, nit, nrc, nombre, nombre_comercial, direccion,
-       telefono, email, codigo_actividad, codigo_establecimiento, codigo_punto_venta,
+       telefono, email, codigo_actividad, desc_actividad, codigo_establecimiento, codigo_punto_venta,
        tipo_establecimiento, usuario_hacienda, password_hacienda, ambiente, activo)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,TRUE)`,
-    [TENANT_ID, '0000-000000-000-0', '00000', 'Restaurante Demo', 'Restaurante Demo',
-     'Av. Principal 123, San Salvador', '2200-5000', 'demo@restaurante.com',
-     '64101', 'M001', 'P001', '02', encriptar('demo-user-hacienda'), encriptar('demo-pass-hacienda'), AMBIENTE]
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,TRUE)`,
+    [TENANT_ID, '00000000000000', '00000', 'Restaurante Demo', 'Restaurante Demo',
+     'Av. Principal 123, San Salvador', '22005000', 'demo@restaurante.com',
+     '56101', 'Restaurantes', 'M001', 'P001', '02',
+     encriptar('demo-user-hacienda'), encriptar('demo-pass-hacienda'), AMBIENTE]
   );
   logger.info('Configuracion del emisor sembrada');
 };
@@ -155,6 +156,19 @@ const sembrarUsuarios = async () => {
       `INSERT INTO usuarios (id, tenant_id, establecimiento_id, nombre, email, password_hash, rol)
        VALUES ($1,$2,$3,$4,$5,$6,'administrador') ON CONFLICT DO NOTHING`,
       [crypto.randomUUID(), TENANT_ID, estActualId, 'Admin Demo', 'admin@demo.pos', hash]
+    );
+  }
+
+  // Fase 2: usuario de plataforma para onboarding (alta de empresas).
+  const { rows: plataformaExistente } = await query(
+    'SELECT id FROM usuarios WHERE email = $1',
+    ['plataforma@demo.pos']
+  );
+  if (plataformaExistente.length === 0) {
+    await query(
+      `INSERT INTO usuarios (id, tenant_id, establecimiento_id, nombre, email, password_hash, rol)
+       VALUES ($1,$2,$3,$4,$5,$6,'plataforma') ON CONFLICT DO NOTHING`,
+      [crypto.randomUUID(), TENANT_ID, estActualId, 'Plataforma Demo', 'plataforma@demo.pos', hash]
     );
   }
 
@@ -291,7 +305,7 @@ const sembrarDTEs = async () => {
     if (estado === 'aceptado') {
       sello = `SelloMH${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     } else if (estado === 'rechazado') {
-      errorHacienda = { codigo: 'MH-${Math.floor(Math.random() * 5) + 1}', descripcion: 'Error en validación de datos del DTE' };
+      errorHacienda = { codigo: `MH-${Math.floor(Math.random() * 5) + 1}`, descripcion: 'Error en validación de datos del DTE' };
     }
 
     await query(

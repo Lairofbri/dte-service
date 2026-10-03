@@ -226,9 +226,8 @@ const construirEmisor = (config, establecimiento) => ({
   nrc:              formatearNRC(config.nrc),
   nombre:           config.nombre,
   codActividad:     config.codigo_actividad,
-  descActividad:    config.desc_actividad   || '',
+  descActividad:    config.desc_actividad,
   nombreComercial:  config.nombre_comercial  || null,
-  tipoEstablecimiento: establecimiento.tipo_establecimiento || null,
   direccion: {
     departamento: establecimiento.departamento_cod || '06',
     municipio:    establecimiento.municipio_cod    || '20',
@@ -239,8 +238,6 @@ const construirEmisor = (config, establecimiento) => ({
   correo:        establecimiento.correo || config.correo || config.email || '',
   codEstable:    establecimiento.cod_estable || establecimiento.cod_estable_mh || null,
   codPuntoVenta: establecimiento.cod_punto_venta || establecimiento.cod_punto_venta_mh || null,
-  codEstableMH:    establecimiento.cod_estable_mh      || null,
-  codPuntoVentaMH: establecimiento.cod_punto_venta_mh  || null,
 });
 
 const construirEmisorPorTipo = (config, establecimiento, tipoDte) => {
@@ -248,6 +245,10 @@ const construirEmisorPorTipo = (config, establecimiento, tipoDte) => {
   if (tipoDte === '05' || tipoDte === '06') {
     delete emisor.codEstable;
     delete emisor.codPuntoVenta;
+  }
+  if (tipoDte === '14') {
+    // FSE v2: el emisor no admite nombreComercial (additionalProperties: false)
+    delete emisor.nombreComercial;
   }
   return emisor;
 };
@@ -317,12 +318,13 @@ const construirReceptorFSE = (receptor) => ({
   nombre:        receptor.nombre,
   codActividad:  receptor.cod_actividad  || null,
   descActividad: receptor.desc_actividad || null,
-  direccion:     receptor.departamento_cod ? {
-    departamento: receptor.departamento_cod,
-    municipio:    receptor.municipio_cod || '20',
-    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
-    complemento:  receptor.direccion    || '',
-  } : null,
+  // El esquema FSE v2 exige direccion como objeto (con complemento >= 1 char).
+  direccion: {
+    departamento: receptor.departamento_cod || '06',
+    municipio:    receptor.municipio_cod    || '20',
+    distrito:     receptor.distrito_cod     || receptor.municipio_cod || '20',
+    complemento:  receptor.direccion        || 'S/D',
+  },
   telefono: formatearTelefono(receptor.telefono) || null,
   correo:   receptor.correo || null,
 });
@@ -352,7 +354,7 @@ const construirItem = (item, numItem, tipoDte) => {
   const base = {
     numItem:         numItem,
     tipoItem:        item.tipo_item  || 1,
-    numeroDocumento: null,
+    numeroDocumento: item.numero_documento || null,
     codigo:          item.codigo     || null,
     codTributo:      null,
     descripcion:     item.descripcion || item.nombre_producto || '',
@@ -507,7 +509,6 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     totalDescu,
     tributos,
     subTotal,
-    reteRenta:          0.0,
     montoTotalOperacion,
     totalNoGravado:     0.0,
     totalPagar,
@@ -518,22 +519,17 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     observaciones,
   };
 
-  if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
-    resumen.ivaPerci1 = 0.0;
-    resumen.ivaRete1 = 0.0;
-  } else if (tipoDte === '01') {
-    resumen.ivaRete1 = 0.0;
-  }
-
-  if (tipoDte === '01' || tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
+  // Campos del resumen según el esquema oficial de cada tipo DTE
+  // (todos con additionalProperties: false — solo los campos admitidos).
+  if (tipoDte === '01') {
     resumen.totalIva = ivaValor;
-  }
-
-  if (tipoDte === '01' || tipoDte === '03' || tipoDte === '06') {
+    resumen.ivaRete = 0.0;
     resumen.numPagoElectronico = null;
-  }
-
-  if (tipoDte === '05' || tipoDte === '06') {
+  } else if (tipoDte === '03') {
+    resumen.ivaPerci = 0.0;
+    resumen.ivaRete = 0.0;
+    resumen.numPagoElectronico = null;
+  } else if (tipoDte === '05') {
     delete resumen.descuNoSuj;
     delete resumen.descuExenta;
     delete resumen.descuGravada;
@@ -541,10 +537,24 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
     delete resumen.subTotal;
     delete resumen.saldoFavor;
     delete resumen.pagos;
+    resumen.totalIva = ivaValor;
+    resumen.ivaPerci = 0.0;
+    resumen.ivaRete = 0.0;
+    resumen.codigoRetencionMH = null;
+  } else if (tipoDte === '06') {
+    delete resumen.descuNoSuj;
+    delete resumen.descuExenta;
+    delete resumen.descuGravada;
+    delete resumen.porcentajeDescuento;
+    delete resumen.subTotal;
+    delete resumen.saldoFavor;
+    delete resumen.pagos;
+    resumen.totalIva = ivaValor;
+    resumen.ivaPerci = 0.0;
+    resumen.ivaRete = 0.0;
+    resumen.numPagoElectronico = null;
     resumen.codigoRetencionMH = null;
   }
-
-  if (tipoDte === '01') delete resumen.ivaPerci;
 
   return resumen;
 };

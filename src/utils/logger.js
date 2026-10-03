@@ -92,3 +92,4 @@ const logger = winston.createLogger({
 // o a un servicio externo como Logtail, Datadog, etc.
 
 module.exports = logger;
+module.exports.redactar = redactar;

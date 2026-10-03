@@ -10,11 +10,54 @@
 
 const { query, getClient } = require('../../config/database');
 const { encriptar, desencriptar } = require('../../config/crypto');
+const { obtenerActividadEconomica } = require('../catalogos/catalogos.service');
 const logger = require('../../utils/logger');
 
 // ─────────────────────────────────────────────
 // HELPERS INTERNOS
 // ─────────────────────────────────────────────
+
+/**
+ * Resuelve la descripción oficial de la actividad económica (CAT-019).
+ * - Si se envía codigo_actividad, la descripción SIEMPRE se deriva del
+ *   catálogo de Hacienda (nunca se acepta una inventada por el cliente).
+ * - Si el código no existe en el catálogo → 400.
+ * - Sin código (solo descripción, compatibilidad legada) → se conserva.
+ */
+const resolverDescripcionActividad = async ({ codigo_actividad, desc_actividad }) => {
+  if (!codigo_actividad) {
+    return desc_actividad || null;
+  }
+
+  const actividad = await obtenerActividadEconomica({ codigo: codigo_actividad });
+  if (!actividad) {
+    throw {
+      status: 400,
+      mensaje: `El código de actividad ${codigo_actividad} no existe en el catálogo de Hacienda (CAT-019).`,
+    };
+  }
+  return actividad.descripcion;
+};
+
+/**
+ * Normaliza campos con formato visual (guiones) a su forma de almacenamiento:
+ * NIT/NRC/teléfono se guardan SOLO con dígitos — Hacienda los recibe sin
+ * guiones en el JSON del DTE (emisor.nit maxLength 14) y el generador ya
+ * los normaliza al emitir. Los guiones son solo presentación (máscara).
+ */
+const normalizarFormato = (datos) => {
+  const normalizado = { ...datos };
+  if (typeof normalizado.nit === 'string') {
+    normalizado.nit = normalizado.nit.replace(/-/g, '');
+  }
+  if (typeof normalizado.nrc === 'string') {
+    normalizado.nrc = normalizado.nrc.replace(/-/g, '');
+  }
+  if (typeof normalizado.telefono === 'string') {
+    normalizado.telefono = normalizado.telefono.replace(/[-\s]/g, '');
+  }
+  return normalizado;
+};
 
 /**
  * Formatea la configuración para respuesta HTTP segura
@@ -108,9 +151,23 @@ const obtenerCredencialesHacienda = async ({ tenant_id } = {}) => {
     throw { status: 400, mensaje: 'No hay credenciales de Hacienda configuradas.' };
   }
 
+  // SEGURIDAD: si el cifrado no puede autenticarse (clave cambiada o dato
+  // corrupto) se responde un error controlado — nunca el detalle técnico.
+  let usuario = null;
+  let password = null;
+  try {
+    usuario  = desencriptar(config.usuario_hacienda);
+    password = desencriptar(config.password_hacienda);
+  } catch {
+    throw {
+      status: 400,
+      mensaje: 'No se pudieron descifrar las credenciales de Hacienda. Vuelve a guardarlas en Configuración.',
+    };
+  }
+
   return {
-    usuario:  desencriptar(config.usuario_hacienda),
-    password: desencriptar(config.password_hacienda),
+    usuario,
+    password,
     ambiente: config.ambiente,
     nit:      config.nit,
   };
@@ -125,6 +182,9 @@ const crearConfiguracion = async ({ datos, tenant_id }) => {
   if (!tenant_id) {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para crear la configuración.' };
   }
+
+  // Normalizar formato visual (NIT/NRC/teléfono → solo dígitos)
+  datos = normalizarFormato(datos);
 
   const client = await getClient();
   try {
@@ -150,6 +210,13 @@ const crearConfiguracion = async ({ datos, tenant_id }) => {
       usuario_hacienda, password_hacienda,
       ambiente,departamento_cod, municipio_cod, desc_actividad,
     } = datos;
+
+    // SEGURIDAD: la descripción de actividad económica se resuelve del
+    // catálogo oficial (CAT-019). Nunca se acepta una arbitraria del cliente.
+    const descripcionActividad = await resolverDescripcionActividad({
+      codigo_actividad,
+      desc_actividad,
+    });
 
     // SEGURIDAD: encriptar credenciales ANTES de guardar en BD
     const usuarioEncriptado  = encriptar(usuario_hacienda);
@@ -190,7 +257,7 @@ const crearConfiguracion = async ({ datos, tenant_id }) => {
       codigo_punto_venta || '0001', tipo_establecimiento || '02',
       usuarioEncriptado, passwordEncriptado,
       ambiente || '00', departamento_cod || '06', municipio_cod || '14',
-      desc_actividad || null,
+      descripcionActividad,
     ];
 
     camposInsert.push('tenant_id');
@@ -242,6 +309,19 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para actualizar la configuración.' };
   }
   await obtenerConfiguracion({ tenant_id });
+
+  // Normalizar formato visual (NIT/NRC/teléfono → solo dígitos)
+  datos = normalizarFormato(datos);
+
+  // SEGURIDAD: si llega codigo_actividad, la descripción se resuelve del
+  // catálogo oficial (CAT-019) y se guarda junto con el código.
+  // Sin código (solo descripción), se conserva el valor enviado.
+  if (datos.codigo_actividad !== undefined) {
+    datos.desc_actividad = await resolverDescripcionActividad({
+      codigo_actividad: datos.codigo_actividad,
+      desc_actividad:   datos.desc_actividad,
+    });
+  }
 
   const camposPermitidos = [
     'nit', 'nrc', 'nombre', 'nombre_comercial',
@@ -377,4 +457,10 @@ module.exports = {
   guardarTokenHacienda,
   crearConfiguracion,
   actualizarConfiguracion,
+  // Exportado para tests unitarios (resolución de CAT-019).
+  resolverDescripcionActividad,
+  // Exportado para tests unitarios (normalización de formato visual).
+  normalizarFormato,
+  // Exportado para tests unitarios de seguridad (redacción). No altera la API.
+  formatearParaRespuesta,
 };

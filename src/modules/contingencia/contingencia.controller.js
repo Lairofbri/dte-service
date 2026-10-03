@@ -17,10 +17,10 @@ const {
 } = require('../../utils/response');
 const logger = require('../../utils/logger');
 
-const obtenerEstablecimientoAutorizado = (req) => (
+const obtenerEstablecimientoAutorizado = (req, value = {}) => (
   req.usuario?.rol === 'administrador'
     ? null
-    : req.usuario?.establecimiento_id || null
+    : req.usuario?.establecimiento_id || value.establecimiento_id || null
 );
 
 // ─────────────────────────────────────────────
@@ -70,11 +70,11 @@ const notificarContingencia = async (req, res) => {
   const { password_pri, ...datos } = value;
 
   try {
-    const resultado = await service.notificarContingencia({
+const resultado = await service.notificarContingencia({
       datos:       {
         ...datos,
         tenant_id: req.tenantId || req.usuario?.tenant_id || null,
-        establecimiento_id: obtenerEstablecimientoAutorizado(req),
+        establecimiento_id: obtenerEstablecimientoAutorizado(req, datos),
       },
       passwordPri: password_pri,
       ip:          req.ip,

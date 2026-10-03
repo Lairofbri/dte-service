@@ -128,9 +128,40 @@ const testHacienda = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/configuracion/estado-firma
+ * Estado de certificado/firma disponible para el tenant (Fase 4).
+ * NUNCA devuelve passwordPri, certificados ni datos del firmador interno.
+ */
+const obtenerEstadoFirma = async (req, res) => {
+  try {
+    // El NIT identifica el certificado; la config puede no existir aún
+    // (tenant en pending_fiscal_setup) — el estado de firma se reporta igual.
+    let nit = null;
+    try {
+      const config = await service.obtenerConfiguracionPublica({ tenant_id: req.tenantId });
+      nit = config.nit || null;
+    } catch (err) {
+      if (!(err.status === 404)) throw err;
+    }
+
+    // Importar el servicio de firmador dinámicamente para no acoplar el módulo.
+    const firmadorService = require('../firmador/firmador.service');
+    const estado = await firmadorService.obtenerEstadoFirmaTenant({
+      tenant_id: req.tenantId,
+      nit,
+    });
+
+    return exito(res, estado);
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
 module.exports = {
   obtenerConfiguracion,
   crearConfiguracion,
   actualizarConfiguracion,
   testHacienda,
+  obtenerEstadoFirma,
 };

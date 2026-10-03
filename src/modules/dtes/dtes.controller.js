@@ -109,7 +109,11 @@ const emitirNotaCredito = async (req, res) => {
 
   try {
     const resultado = await service.emitirNotaCredito({
-      datos: { ...value, tenant_id: obtenerTenantAutenticado(req) },
+      datos: {
+        ...value,
+        establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+        tenant_id: obtenerTenantAutenticado(req),
+      },
       ip: req.ip,
     });
     return creado(res, resultado, 'Nota de Crédito emitida exitosamente.');
@@ -128,7 +132,11 @@ const emitirNotaDebito = async (req, res) => {
 
   try {
     const resultado = await service.emitirNotaDebito({
-      datos: { ...value, tenant_id: obtenerTenantAutenticado(req) },
+      datos: {
+        ...value,
+        establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+        tenant_id: obtenerTenantAutenticado(req),
+      },
       ip: req.ip,
     });
     return creado(res, resultado, 'Nota de Débito emitida exitosamente.');
@@ -190,12 +198,14 @@ const anularDTE = async (req, res) => {
 
   try {
     const resultado = await service.anularDTE({
-      datos: {
+datos: {
         ...value,
         tenant_id: obtenerTenantAutenticado(req),
+        // JWT: admin → tenant-wide; operador → su establecimiento fijo.
+        // API Key (POS): establecimiento original del DTE enviado en el body.
         establecimiento_id: req.usuario?.rol === 'administrador'
           ? null
-          : req.usuario?.establecimiento_id || null,
+          : req.usuario?.establecimiento_id || value.establecimiento_id || null,
       },
       ip: req.ip,
     });

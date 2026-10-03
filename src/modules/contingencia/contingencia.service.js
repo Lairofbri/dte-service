@@ -47,7 +47,7 @@ const registrarAuditoria = async (evento, detalles, ip, tenant_id) => {
 // Basado en el esquema contingencia-schema-v3.json
 // TODOS los campos requeridos según el esquema
 // ─────────────────────────────────────────────
-const construirJsonContingencia = ({ config, dtes, datos }) => {
+const construirJsonContingencia = ({ config, establecimiento, dtes, datos }) => {
   // Una sola instancia de Date para fTransmision y hTransmision
   // Evita inconsistencias en cambios de día (lección aprendida)
   const { fecEmi: fTransmision, horEmi: hTransmision } = getFechaHoraEmision();
@@ -68,10 +68,10 @@ const construirJsonContingencia = ({ config, dtes, datos }) => {
       nombreResponsable:    datos.nombre_responsable,
       tipoDocResponsable:   datos.tipo_doc_responsable,
       numeroDocResponsable: datos.num_doc_responsable,
-      tipoEstablecimiento:  config.tipo_establecimiento || '02',
-      // codEstableMH y codPuntoVenta son opcionales en el esquema
-      codEstableMH:         config.codigo_establecimiento || null,
-      codPuntoVenta:        config.codigo_punto_venta    || null,
+      // Fase 5 — códigos del establecimiento original de los DTEs, no del tenant
+      tipoEstablecimiento:  establecimiento.tipo_establecimiento || '02',
+      codEstableMH:         establecimiento.cod_estable_mh || null,
+      codPuntoVenta:        establecimiento.cod_punto_venta_mh || null,
       telefono:             config.telefono || '00000000',
       correo:               config.email    || null,
     },
@@ -166,7 +166,7 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
       `SELECT
          d.id, d.tipo_dte, d.codigo_generacion,
          d.numero_control, d.json_firmado,
-         d.fecha_emision, d.ambiente
+         d.fecha_emision, d.ambiente, d.establecimiento_id
          FROM dtes d
         WHERE ${filtros.join(' AND ')}
         ORDER BY d.fecha_emision ASC, d.hora_emision ASC`,
@@ -186,9 +186,37 @@ const notificarContingencia = async ({ datos, passwordPri, ip }) => {
     // ── PASO 2: Obtener configuración del emisor ──
     const config = await configuracionService.obtenerConfiguracion({ tenant_id });
 
+    // ── PASO 2b: Fase 5 — resolver el establecimiento original de los DTEs ──
+    // El evento de contingencia usa los códigos del establecimiento de los DTEs,
+    // NUNCA los códigos globales de la configuración del tenant (spec §9).
+    const idsEstablecimientos = [...new Set(dtesEnContingencia.map((d) => d.establecimiento_id).filter(Boolean))];
+    if (idsEstablecimientos.length > 1) {
+      throw {
+        status: 409,
+        mensaje: 'La contingencia incluye DTEs de varios establecimientos; procese por establecimiento.',
+      };
+    }
+    let establecimiento = null;
+    if (idsEstablecimientos.length === 1) {
+      const { rows } = await query(
+        `SELECT id, cod_estable_mh, cod_punto_venta_mh, tipo_establecimiento
+         FROM establecimientos
+         WHERE id = $1 AND tenant_id = $2`,
+        [idsEstablecimientos[0], tenant_id]
+      );
+      establecimiento = rows[0] || null;
+    }
+    if (!establecimiento) {
+      throw {
+        status: 409,
+        mensaje: 'No se pudo resolver el establecimiento de los DTEs en contingencia.',
+      };
+    }
+
     // ── PASO 3: Construir JSON del evento de contingencia ──
     const jsonContingencia = construirJsonContingencia({
       config,
+      establecimiento,
       dtes: dtesEnContingencia,
       datos,
     });
