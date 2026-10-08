@@ -396,6 +396,64 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
 };
 
 /**
+ * Guardar la contraseña de firma (passwordPri) en BD, CIFRADA.
+ * POR TENANT — cada empresa carga su propia contraseña desde Configuración.
+ * Vacío/null → limpia la credencial.
+ * El valor NUNCA se devuelve al cliente (solo el booleano de disponibilidad).
+ */
+const guardarPasswordFirma = async ({ password_firma, tenant_id }) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para guardar la contraseña de firma.' };
+  }
+  await obtenerConfiguracion({ tenant_id });
+
+  const valor = password_firma && password_firma.trim()
+    ? encriptar(password_firma.trim())
+    : null;
+
+  const queryText = `UPDATE configuracion
+     SET password_firma = $1
+     WHERE tenant_id = $2`;
+  const params = [valor, tenant_id];
+
+  await query(queryText, params);
+
+  logger.info('Contraseña de firma ' + (valor ? 'guardada' : 'eliminada'), {
+    // NUNCA loguear la contraseña ni su valor cifrado
+  });
+
+  return { password_firma_configurada: !!valor };
+};
+
+/**
+ * Obtener la contraseña de firma desencriptada (solo para la operación de firma).
+ * NUNCA devolver al cliente HTTP.
+ * @returns {Promise<string|null>} contraseña en texto plano o null si no hay.
+ */
+const obtenerPasswordFirma = async ({ tenant_id } = {}) => {
+  if (!tenant_id) {
+    throw { status: 400, mensaje: 'Tenant autenticado requerido para obtener la contraseña de firma.' };
+  }
+
+  const queryText = `SELECT password_firma
+     FROM configuracion
+     WHERE tenant_id = $1`;
+  const params = [tenant_id];
+
+  const { rows } = await query(queryText, params);
+
+  if (rows.length === 0) {
+    throw { status: 404, mensaje: 'No hay configuración registrada. Crea una primero.' };
+  }
+
+  if (!rows[0].password_firma) {
+    return null;
+  }
+
+  return desencriptar(rows[0].password_firma);
+};
+
+/**
  * Guardar el token de Hacienda en BD (encriptado)
  * Solo para uso interno del módulo de Hacienda
  * El cliente NUNCA ve este token
@@ -453,6 +511,8 @@ module.exports = {
   obtenerConfiguracion,
   obtenerConfiguracionPublica,
   obtenerCredencialesHacienda,
+  obtenerPasswordFirma,
+  guardarPasswordFirma,
   obtenerTokenHacienda,
   guardarTokenHacienda,
   crearConfiguracion,

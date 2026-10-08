@@ -11,6 +11,7 @@ const CAMPOS_SENSIBLES = [
   'password',
   'passwordPri',
   'password_pri',
+  'password_firma',
   'password_hacienda',
   'usuario_hacienda',
   'api_key',

@@ -71,14 +71,10 @@ module.exports = {
   // ── Firmador ──
   URL_FIRMADOR:     requerida('URL_FIRMADOR'),
   TIMEOUT_FIRMADOR: opcionalInt('TIMEOUT_FIRMADOR', 10000),
-  FIRMADOR_API_KEY: opcional('FIRMADOR_API_KEY'),
-  // Token Bearer para el firmador remoto (Authorization: Bearer <token>).
-  // Lo provee el operador del servicio de firma (ej: firmador.cuscatec.com).
-  FIRMADOR_TOKEN: opcional('FIRMADOR_TOKEN'),
-  // Contraseña de la llave privada del certificado de firma.
-  // NUNCA se persiste en BD. Se inyecta en runtime (env o Secret Manager).
-  // Se lee exclusivamente dentro de la operación de firma.
-  FIRMADOR_PASSWORD_PRI: opcional('FIRMADOR_PASSWORD_PRI'),
+  // NOTA: el firmador remoto (svfe-api-firmador en Bluehost) NO requiere
+  // autenticación por token/API key — la seguridad es HTTPS + IP allowlist.
+  // La contraseña del certificado (passwordPri) es POR TENANT y vive CIFRADA
+  // en BD (configuracion.password_firma) — nunca en variables de entorno.
 
   // ── S3/R2 ──
   S3_ENDPOINT:   opcional('S3_ENDPOINT'),

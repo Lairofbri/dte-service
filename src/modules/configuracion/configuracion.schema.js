@@ -117,7 +117,19 @@ const actualizarConfiguracionSchema = Joi.object({
   'object.min': 'Debe enviar al menos un campo para actualizar.',
 });
 
+// ─────────────────────────────────────────────
+// Schema para guardar/limpiar la contraseña de firma (passwordPri)
+// POR TENANT — se guarda CIFRADA en BD (password_firma), nunca en entorno.
+// Vacío/null = limpiar la credencial. El backend NUNCA la devuelve.
+// ─────────────────────────────────────────────
+const passwordFirmaSchema = Joi.object({
+  password_firma: Joi.string().min(1).max(255).allow('', null).messages({
+    'string.max': 'La contraseña de firma no puede superar 255 caracteres.',
+  }),
+}).required();
+
 module.exports = {
   crearConfiguracionSchema,
   actualizarConfiguracionSchema,
+  passwordFirmaSchema,
 };

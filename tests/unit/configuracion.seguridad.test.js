@@ -7,8 +7,8 @@
 //   reposo (crypto.js) y los logs las redactan (logger.redactar).
 // - Prueba de autenticación Hacienda: POST /api/configuracion/test-hacienda
 //   nunca devuelve el token.
-// - Estado de firma por tenant: la credencial de firma proviene del entorno
-//   (Secret Manager), nunca se persiste ni se devuelve.
+// - Contraseña de firma (passwordPri): POR TENANT, CIFRADA en BD
+//   (configuracion.password_firma), nunca en entorno, nunca se devuelve.
 
 // Fallbacks de entorno: garantizan el require en CI sin .env (no conecta a BD).
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/dte_service_test';
@@ -20,7 +20,6 @@ process.env.URL_CONSULTA_HACIENDA = process.env.URL_CONSULTA_HACIENDA || 'https:
 process.env.URL_CONTINGENCIA_HACIENDA = process.env.URL_CONTINGENCIA_HACIENDA || 'https://apitest.dtes.mh.gob.sv/fesv/contingencia';
 process.env.URL_ANULACION_HACIENDA = process.env.URL_ANULACION_HACIENDA || 'https://apitest.dtes.mh.gob.sv/fesv/anulardte';
 process.env.URL_FIRMADOR = process.env.URL_FIRMADOR || 'http://localhost:8113/firmardocumento/';
-process.env.FIRMADOR_PASSWORD_PRI = process.env.FIRMADOR_PASSWORD_PRI || 'secreto-global-test';
 process.env.INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || null;
 
 const test = require('node:test');
@@ -238,38 +237,70 @@ test('test-hacienda sin credenciales configuradas devuelve 400', async () => {
 });
 
 // ─────────────────────────────────────────────
-// ESTADO DE FIRMA POR TENANT — credencial desde
-// Secret Manager/env, nunca persistida
+// CONTRASEÑA DE FIRMA (passwordPri) POR TENANT — cifrada en BD,
+// nunca en entorno, nunca devuelta al cliente
 // ─────────────────────────────────────────────
 
-test('credenciales de firma: secreto por tenant (env/Secret Manager), sin persistencia', () => {
-  const { obtenerPasswordFirma, hayCredencialFirma } = require('../../src/modules/firmador/credenciales.service');
+test('logger.redactar oculta password_firma', () => {
+  const { redactar } = require('../../src/utils/logger');
 
-  const TENANT_A = 'a2000000-0000-4000-8000-000000000001';
-  const TENANT_B = 'a2000000-0000-4000-8000-000000000002';
-  const claveOriginal = process.env[`FIRMADOR_PASSWORD_PRI_${TENANT_A}`];
+  const salida = redactar({ password_firma: 'clave-super-secreta', normal: 'ok' });
 
-  try {
-    delete process.env[`FIRMADOR_PASSWORD_PRI_${TENANT_A}`];
-    // Sin secreto por tenant → cae al global (definido arriba).
-    assert.equal(obtenerPasswordFirma({ tenant_id: TENANT_A }), 'secreto-global-test');
-    assert.equal(hayCredencialFirma({ tenant_id: TENANT_A }), true);
+  assert.equal(salida.password_firma, '[REDACTADO]');
+  assert.equal(salida.normal, 'ok');
+});
 
-    // Secreto por tenant (simula Secret Manager inyectado por tenant).
-    process.env[`FIRMADOR_PASSWORD_PRI_${TENANT_A}`] = 'secreto-tenant-A';
-    assert.equal(obtenerPasswordFirma({ tenant_id: TENANT_A }), 'secreto-tenant-A');
-    assert.equal(hayCredencialFirma({ tenant_id: TENANT_A }), true);
+test('credenciales de firma: se obtienen de la BD (cifrada) por tenant, no del entorno', async () => {
+  const mockBD = async ({ tenant_id }) => {
+    if (tenant_id === 'TENANT-CON-CLAVE') return 'clave-tenant-A';
+    return null;
+  };
+  const rutaConfiguracion = require.resolve('../../src/modules/configuracion/configuracion.service');
+  require.cache[rutaConfiguracion] = {
+    id: rutaConfiguracion,
+    filename: rutaConfiguracion,
+    loaded: true,
+    exports: { obtenerPasswordFirma: mockBD },
+  };
 
-    // Otro tenant sin secreto propio → global.
-    assert.equal(obtenerPasswordFirma({ tenant_id: TENANT_B }), 'secreto-global-test');
-  } finally {
-    if (claveOriginal === undefined) delete process.env[`FIRMADOR_PASSWORD_PRI_${TENANT_A}`];
-    else process.env[`FIRMADOR_PASSWORD_PRI_${TENANT_A}`] = claveOriginal;
-  }
+  const rutaCredenciales = require.resolve('../../src/modules/firmador/credenciales.service');
+  delete require.cache[rutaCredenciales];
+  const { obtenerPasswordFirma, hayCredencialFirma } = require(rutaCredenciales);
+
+  // Tenant con contraseña cargada → se obtiene.
+  assert.equal(await obtenerPasswordFirma({ tenant_id: 'TENANT-CON-CLAVE' }), 'clave-tenant-A');
+  assert.equal(await hayCredencialFirma({ tenant_id: 'TENANT-CON-CLAVE' }), true);
+
+  // Tenant sin contraseña → error controlado 503 / false.
+  await assert.rejects(
+    () => obtenerPasswordFirma({ tenant_id: 'TENANT-SIN-CLAVE' }),
+    (err) => err.status === 503 && err.mensaje.includes('No hay contraseña de firma configurada')
+  );
+  assert.equal(await hayCredencialFirma({ tenant_id: 'TENANT-SIN-CLAVE' }), false);
+
+  // El entorno NUNCA influye (aunque existan variables obsoletas).
+  process.env.FIRMADOR_PASSWORD_PRI = 'secreto-que-ya-no-se-usa';
+  process.env.FIRMADOR_PASSWORD_PRI_TENANT_CON_CLAVE = 'otro-secreto';
+  assert.equal(await obtenerPasswordFirma({ tenant_id: 'TENANT-CON-CLAVE' }), 'clave-tenant-A');
+  delete process.env.FIRMADOR_PASSWORD_PRI;
+  delete process.env.FIRMADOR_PASSWORD_PRI_TENANT_CON_CLAVE;
 });
 
 test('obtenerEstadoFirmaTenant agrega el estado por tenant sin exponer secretos', async () => {
-  const { obtenerEstadoFirmaTenant } = require('../../src/modules/firmador/firmador.service');
+  const rutaCredenciales = require.resolve('../../src/modules/firmador/credenciales.service');
+  require.cache[rutaCredenciales] = {
+    id: rutaCredenciales,
+    filename: rutaCredenciales,
+    loaded: true,
+    exports: {
+      obtenerPasswordFirma: async () => 'clave-tenant-A',
+      hayCredencialFirma: async () => true,
+    },
+  };
+
+  const rutaFirmador = require.resolve('../../src/modules/firmador/firmador.service');
+  delete require.cache[rutaFirmador];
+  const { obtenerEstadoFirmaTenant } = require(rutaFirmador);
 
   const estado = await obtenerEstadoFirmaTenant({ tenant_id: TENANT, nit: '0614-260967-101-5' });
 
@@ -278,5 +309,6 @@ test('obtenerEstadoFirmaTenant agrega el estado por tenant sin exponer secretos'
   assert.ok(['listo', 'firmador_offline', 'sin_credencial'].includes(estado.estado));
   assert.equal(typeof estado.firmador_disponible, 'boolean');
   assert.equal(typeof estado.credencial_firma_disponible, 'boolean');
+  assert.equal(estado.credencial_firma_disponible, true, 'la credencial viene de la BD por tenant');
   assert.ok(!JSON.stringify(estado).includes('password'), 'el estado de firma nunca expone secretos');
 });

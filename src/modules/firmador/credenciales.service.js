@@ -1,49 +1,50 @@
 // src/modules/firmador/credenciales.service.js
 // Proveedor de la contraseña de la llave privada del certificado de firma.
 //
-// SEGURIDAD CRÍTICA:
-// → La contraseña NUNCA se almacena en base de datos.
-// → La contraseña NUNCA se persiste, registra ni devuelve al cliente.
-// → La contraseña se obtiene únicamente durante la operación de firma.
-// → El valor se lee de un secreto inyectado en runtime (env / secret manager).
+// MULTI-EMPRESA (Fase Firmador Bluehost):
+// → La contraseña la carga el usuario de cada empresa en Configuración.
+// → Se guarda CIFRADA (AES-256-GCM con ENCRYPTION_KEY) en la columna
+//   password_firma de la tabla configuracion — patrón password_hacienda.
+// → NUNCA se guarda en variables de entorno ni se devuelve al cliente.
 //
-// Mecanismo actual: variable de entorno FIRMADOR_PASSWORD_PRI.
-// Futuro: integración con Secret Manager o HSM (no modificar esta interfaz).
+// SEGURIDAD CRÍTICA:
+// → La contraseña NUNCA se persiste en texto plano.
+// → La contraseña NUNCA se registra en logs ni se devuelve al cliente.
+// → La contraseña se desencripta únicamente durante la operación de firma.
 
-const { FIRMADOR_PASSWORD_PRI } = require('../../config/env');
+const configuracionService = require('../configuracion/configuracion.service');
 
 /**
  * Obtiene la contraseña de la llave privada para firmar.
  *
+ * Lee la credencial CIFRADA de la BD del tenant y la desencripta en memoria
+ * solo durante la operación de firma.
+ *
  * @param {object} params
- * @param {string} [params.tenant_id] — tenant para el que se firma (uso futuro con
- *                                      secretos por tenant). Si no se provee, se
- *                                      usa el secreto global del entorno.
- * @returns {string} contraseña de la llave privada
+ * @param {string} [params.tenant_id] — tenant para el que se firma (obligatorio).
+ * @returns {Promise<string>} contraseña de la llave privada
  * @throws {object} error controlado si no hay credencial disponible
  */
-const obtenerPasswordFirma = ({ tenant_id } = {}) => {
-  if (tenant_id && process.env[`FIRMADOR_PASSWORD_PRI_${tenant_id}`]) {
-    return process.env[`FIRMADOR_PASSWORD_PRI_${tenant_id}`];
+const obtenerPasswordFirma = async ({ tenant_id } = {}) => {
+  const password = await configuracionService.obtenerPasswordFirma({ tenant_id });
+
+  if (!password) {
+    throw {
+      status: 503,
+      mensaje: 'No hay contraseña de firma configurada. Cárgala en Configuración (una vez por empresa).',
+    };
   }
 
-  if (FIRMADOR_PASSWORD_PRI) {
-    return FIRMADOR_PASSWORD_PRI;
-  }
-
-  throw {
-    status: 503,
-    mensaje: 'No hay credencial de firma configurada. Verifica la infraestructura de firma.',
-  };
+  return password;
 };
 
 /**
- * Indica si hay una credencial de firma disponible.
+ * Indica si hay una credencial de firma disponible para el tenant.
  */
-const hayCredencialFirma = ({ tenant_id } = {}) => {
+const hayCredencialFirma = async ({ tenant_id } = {}) => {
   try {
-    obtenerPasswordFirma({ tenant_id });
-    return true;
+    const password = await configuracionService.obtenerPasswordFirma({ tenant_id });
+    return !!password;
   } catch (_) {
     return false;
   }

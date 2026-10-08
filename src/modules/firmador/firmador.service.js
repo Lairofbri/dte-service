@@ -3,7 +3,8 @@
 // El firmador es un servicio Java que corre localmente (Docker o Windows Service)
 //
 // SEGURIDAD CRÍTICA:
-// → passwordPri NUNCA se almacena — viene en cada request y se descarta
+// → passwordPri NUNCA se almacena en texto plano — se guarda CIFRADA por
+//   tenant en BD (password_firma, AES-256-GCM) y se desencripta solo al firmar.
 // → passwordPri NUNCA aparece en logs
 // → Timeout estricto de 10 segundos
 // → Si el firmador no responde → error controlado, no contingencia
@@ -13,8 +14,6 @@ const axios  = require('axios');
 const {
   URL_FIRMADOR,
   TIMEOUT_FIRMADOR,
-  FIRMADOR_API_KEY,
-  FIRMADOR_TOKEN,
 } = require('../../config/env');
 // NIT se lee de la BD — la única fuente de verdad del emisor
 // No del env — permite vender a múltiples clientes sin cambiar variables
@@ -25,16 +24,14 @@ const { esJwt } = require('../integracion/integracion.utils');
 
 // ─────────────────────────────────────────────
 // CLIENTE HTTP con timeout estricto
-// El firmador corre localmente — si no responde en 10s hay un problema
+// El firmador remoto (svfe-api-firmador en Bluehost) NO tiene autenticación
+// propia — la seguridad se delega a HTTPS + IP allowlist en el hosting.
 // ─────────────────────────────────────────────
 const clienteFirmador = axios.create({
   timeout: parseInt(TIMEOUT_FIRMADOR, 10),
-      headers: {
-        'Content-Type': 'application/json',
-        ...(FIRMADOR_API_KEY ? { 'X-Firmador-Key': FIRMADOR_API_KEY } : {}),
-        // Firmador remoto: autenticación con Bearer token provisto por el operador.
-        ...(FIRMADOR_TOKEN ? { 'Authorization': `Bearer ${FIRMADOR_TOKEN}` } : {}),
-      },
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
 // ═════════════════════════════════════════════
@@ -46,16 +43,16 @@ const clienteFirmador = axios.create({
  *
  * @param {object} jsonDte     — JSON del DTE construido por el generador
  * @param {string} [passwordPri] — contraseña de la llave privada del certificado.
- *                                 Opcional: si no se provee, se obtiene del
- *                                 proveedor de credenciales (nunca de BD).
+ *                                 Opcional: si no se provee, se obtiene de la
+ *                                 credencial cifrada por tenant en BD.
  * @param {string} [tenant_id]    — tenant para el que se firma (secreto por tenant)
  * @returns {string}           — JWT firmado listo para transmitir a Hacienda
  */
 const firmarDTE = async ({ jsonDte, passwordPri, tenant_id }) => {
-  // La credencial se obtiene del proveedor seguro si no viene en el request.
-  // NUNCA se persiste. Solo vive durante la operación de firma.
+  // La credencial se obtiene del proveedor seguro (BD cifrada) si no viene
+  // en el request. Solo vive durante la operación de firma.
   if (!passwordPri) {
-    passwordPri = obtenerPasswordFirma({ tenant_id });
+    passwordPri = await obtenerPasswordFirma({ tenant_id });
   }
 
   // Obtener NIT de la BD — única fuente de verdad del emisor
@@ -213,13 +210,13 @@ const verificarFirmador = async () => {
  *
  * NUNCA expone secretos (passwordPri, certificado) — solo señales operativas:
  * - firmador_disponible: el servicio de firma responde (health check global).
- * - credencial_firma_disponible: existe secreto de firma para el tenant
- *   (FIRMADOR_PASSWORD_PRI_<tenant_id> o global) — spec §3.3.
+ * - credencial_firma_disponible: existe contraseña de firma cargada para el
+ *   tenant en BD (password_firma cifrada) — spec §3.3.
  * - estado: 'listo' | 'firmador_offline' | 'sin_credencial'.
  */
 const obtenerEstadoFirmaTenant = async ({ tenant_id, nit = null }) => {
   const firmador = await verificarFirmador();
-  const credencialDisponible = hayCredencialFirma({ tenant_id });
+  const credencialDisponible = await hayCredencialFirma({ tenant_id });
 
   let estado;
   if (!firmador.disponible) estado = 'firmador_offline';

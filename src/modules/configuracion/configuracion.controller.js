@@ -9,6 +9,7 @@ const service = require('./configuracion.service');
 const {
   crearConfiguracionSchema,
   actualizarConfiguracionSchema,
+  passwordFirmaSchema,
 } = require('./configuracion.schema');
 const {
   exito,
@@ -129,6 +130,26 @@ const testHacienda = async (req, res) => {
 };
 
 /**
+ * PUT /api/configuracion/password-firma
+ * Guarda (cifrada) o limpia la contraseña de firma del certificado POR TENANT.
+ * NUNCA devuelve la contraseña — solo el booleano de disponibilidad.
+ */
+const actualizarPasswordFirma = async (req, res) => {
+  const { error: validacionError, value } = passwordFirmaSchema.validate(req.body);
+  if (validacionError) return error(res, validacionError.details[0].message, 400);
+
+  try {
+    const resultado = await service.guardarPasswordFirma({
+      password_firma: value.password_firma,
+      tenant_id:      req.tenantId,
+    });
+    return exito(res, resultado, 'Contraseña de firma actualizada correctamente.');
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
+/**
  * GET /api/configuracion/estado-firma
  * Estado de certificado/firma disponible para el tenant (Fase 4).
  * NUNCA devuelve passwordPri, certificados ni datos del firmador interno.
@@ -163,5 +184,6 @@ module.exports = {
   crearConfiguracion,
   actualizarConfiguracion,
   testHacienda,
+  actualizarPasswordFirma,
   obtenerEstadoFirma,
 };

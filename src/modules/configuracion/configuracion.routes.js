@@ -28,6 +28,10 @@ router.patch('/', requiereAdministrador, controller.actualizarConfiguracion);
 // POST /api/configuracion/test-hacienda — probar conexión con Hacienda (solo administrador)
 router.post('/test-hacienda', requiereAdministrador, controller.testHacienda);
 
+// PUT /api/configuracion/password-firma — guardar/limpiar contraseña de firma
+// cifrada por tenant (solo administrador). NUNCA devuelve el valor.
+router.put('/password-firma', requiereAdministrador, controller.actualizarPasswordFirma);
+
 // GET /api/configuracion/estado-firma — estado de certificado/firma por tenant (solo administrador)
 router.get('/estado-firma', requiereAdministrador, controller.obtenerEstadoFirma);
 
