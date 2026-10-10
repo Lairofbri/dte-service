@@ -61,7 +61,7 @@ app.use(cors({
     logger.warn('CORS bloqueado', { origin });
     callback(new Error(`Origen no permitido: ${origin}`));
   },
-  methods:          ['GET', 'POST', 'PATCH', 'DELETE'],
+  methods:          ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders:   ['Content-Type', 'X-API-Key', 'X-Tenant-Id', 'Authorization'],
   // credentials: true — requerido para que el navegador envíe cookies httpOnly
   credentials:      true,

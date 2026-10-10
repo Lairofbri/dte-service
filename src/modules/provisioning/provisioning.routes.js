@@ -9,6 +9,8 @@
 //
 // Rutas de plataforma (JWT, rol plataforma):
 //   POST  /api/provisioning/tenants          — alta desde DTE
+//   PATCH /api/provisioning/tenants/:tenantId      — editar datos de la empresa
+//   PATCH /api/provisioning/tenants/:tenantId/admin — editar administrador inicial
 //
 // Ruta de estado (JWT, admin o plataforma):
 //   GET   /api/provisioning/status           — estado visible al admin DTE
@@ -52,6 +54,8 @@ const routerApi = Router();
 routerApi.use(autenticarJWT);
 
 routerApi.post('/tenants', idempotenciaObligatoria, controller.crearTenantDesdePlataforma);
+routerApi.patch('/tenants/:tenantId', controller.actualizarTenantDesdePlataforma);
+routerApi.patch('/tenants/:tenantId/admin', controller.actualizarAdminDesdePlataforma);
 routerApi.get('/status', controller.listarEstadoProvision);
 
 module.exports = { routerInterno, routerApi };

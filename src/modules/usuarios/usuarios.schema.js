@@ -50,12 +50,15 @@ const crearUsuarioSchema = Joi.object({
       'any.only':     'El rol debe ser administrador, operador o plataforma.',
       'any.required': 'El rol es requerido.',
     }),
+  // Desde 2026-10-07 es OPCIONAL (antes requerido): administradores de
+  // tenants en provisión no tienen establecimientos todavía; la emisión
+  // queda ligada cuando existan (spec §3.4).
   establecimiento_id: Joi.string()
     .uuid()
-    .required()
+    .optional()
+    .allow(null)
     .messages({
       'string.uuid':  'El establecimiento_id debe ser un UUID válido.',
-      'any.required': 'El establecimiento es requerido.',
     }),
 });
 

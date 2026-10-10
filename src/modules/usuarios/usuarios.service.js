@@ -82,7 +82,7 @@ const listarUsuarios = async ({ soloActivos = false, tenant_id } = {}) => {
        e.nombre        AS establecimiento_nombre,
        e.cod_estable_mh AS establecimiento_cod
      FROM usuarios u
-     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
+     LEFT JOIN establecimientos e ON e.id = u.establecimiento_id
      ${where}
      ORDER BY u.activo DESC, u.nombre ASC`,
     valores
@@ -117,7 +117,7 @@ const obtenerUsuario = async ({ id, tenant_id }) => {
        e.nombre         AS establecimiento_nombre,
        e.cod_estable_mh AS establecimiento_cod
      FROM usuarios u
-     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
+     LEFT JOIN establecimientos e ON e.id = u.establecimiento_id
      WHERE u.id = $1 AND u.tenant_id = $2`;
   const params = [id, tenant_id];
 
@@ -156,7 +156,7 @@ const obtenerUsuarioPorEmail = async ({ email, tenant_id }) => {
        e.nombre         AS establecimiento_nombre,
        e.cod_estable_mh AS establecimiento_cod
      FROM usuarios u
-     INNER JOIN establecimientos e ON e.id = u.establecimiento_id
+     LEFT JOIN establecimientos e ON e.id = u.establecimiento_id
      WHERE u.email = $1 AND u.tenant_id = $2`;
   const params = [email.toLowerCase(), tenant_id];
 
@@ -190,16 +190,21 @@ const crearUsuario = async ({ datos, tenant_id }) => {
     throw { status: 409, mensaje: 'Ya existe un usuario con ese email en este tenant.' };
   }
 
-  // Verificar que el establecimiento existe, está activo Y pertenece al tenant
-  const { rows: estable } = await query(
-    'SELECT id FROM establecimientos WHERE id = $1 AND activo = TRUE AND tenant_id = $2',
-    [establecimiento_id, tenant_id]
-  );
-  if (estable.length === 0) {
-    throw {
-      status:  400,
-      mensaje: 'El establecimiento no existe, está inactivo o pertenece a otro tenant.',
-    };
+  // Verificar que el establecimiento existe, está activo Y pertenece al tenant.
+  // Desde 2026-10-07 puede ser NULL: administradores de tenants en provisión
+  // (pending_fiscal_setup) aún no tienen establecimientos; la emisión queda
+  // ligada cuando existan (spec §3.4).
+  if (establecimiento_id) {
+    const { rows: estable } = await query(
+      'SELECT id FROM establecimientos WHERE id = $1 AND activo = TRUE AND tenant_id = $2',
+      [establecimiento_id, tenant_id]
+    );
+    if (estable.length === 0) {
+      throw {
+        status:  400,
+        mensaje: 'El establecimiento no existe, está inactivo o pertenece a otro tenant.',
+      };
+    }
   }
 
   // Hashear password con bcrypt 12 rondas ANTES de guardar

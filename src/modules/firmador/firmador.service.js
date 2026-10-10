@@ -70,7 +70,8 @@ const firmarDTE = async ({ jsonDte, passwordPri, tenant_id }) => {
     const respuesta = await clienteFirmador.post(URL_FIRMADOR, {
       nit:        nitSinGuiones,
       activo:     true,
-      passwordPri, // Se envía al firmador y se descarta — nunca se guarda
+      passwordPri, // Se envía al firmador y se descarta — en reposo vive solo cifrado
+      // (configuracion.password_firma, migración 030) y se desencripta al firmar.
       dteJson:    JSON.stringify(jsonDte),
     });
 

@@ -22,10 +22,86 @@ const crearDbFake = () => {
   const tenants = new Map();
   const establecimientos = new Map();
   const configuraciones = new Map();
+  const usuarios = new Map();
+  const correlativos = [];
   let siguienteId = 1;
 
   const query = async (text, params = []) => {
     const sql = text.replace(/\s+/g, ' ').trim();
+
+    // ── 2026-10-10: transacción del bootstrap ──
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return { rows: [] };
+    }
+
+    // ── 2026-10-10: usuarios find-or-create del bootstrap ──
+    if (sql.startsWith('INSERT INTO usuarios')) {
+      const fila = {
+        id: `usr-${siguienteId++}`,
+        tenant_id: params[4],
+        email: String(params[1]).toLowerCase(),
+        nombre: params[0],
+        password_hash: params[2],
+        rol: 'administrador',
+        establecimiento_id: params[3],
+      };
+      usuarios.set(`${fila.tenant_id}|${fila.email}`, fila);
+      return { rows: [fila] };
+    }
+    if (sql.startsWith('UPDATE usuarios SET establecimiento_id')) {
+      const objetivo = [...usuarios.values()].find((u) => u.id === params[1]);
+      if (objetivo && objetivo.establecimiento_id == null) objetivo.establecimiento_id = params[0];
+      return { rows: objetivo ? [objetivo] : [] };
+    }
+
+    // ── 2026-10-10: configuracion + correlativos del bootstrap ──
+    if (sql.startsWith('INSERT INTO configuracion')) {
+      const fila = {
+        tenant_id: params[0],
+        nit: params[1],
+        nombre: params[3],
+        nombre_comercial: params[4],
+      };
+      configuraciones.set(params[0], fila);
+      return { rows: [{ id: `cfg-${siguienteId++}` }] };
+    }
+    if (sql.startsWith('INSERT INTO correlativos')) {
+      correlativos.push({
+        tenant_id: params[0],
+        tipo_dte: params[1],
+        ambiente: params[2],
+        establecimiento_id: params[3],
+      });
+      return { rows: [] };
+    }
+
+    // Establecimiento del bootstrap (con códigos MH, sin branch_id).
+    if (sql.startsWith('INSERT INTO establecimientos') && sql.includes('cod_estable_mh')) {
+      const fila = {
+        id: params[0],
+        tenant_id: params[1],
+        nombre: params[2],
+        direccion: params[3],
+        telefono: params[4],
+        email: params[5],
+        cod_estable_mh: params[6],
+        cod_punto_venta_mh: params[7],
+        tipo_establecimiento: params[8],
+        departamento_cod: params[9],
+        municipio_cod: params[10],
+        fiscal_status: 'ready',
+        provisioning_status: 'confirmed',
+        activo: true,
+      };
+      establecimientos.set(`id:${params[0]}`, fila);
+      return { rows: [fila] };
+    }
+
+    // ── 2026-10-07: usuarios (usuario inicial del tenant) ──
+    if (sql.includes('FROM usuarios WHERE email = $1 AND tenant_id = $2')) {
+      const fila = usuarios.get(`${params[1]}|${params[0]}`);
+      return { rows: fila ? [fila] : [] };
+    }
 
     // Buscar por provisioning_operation_id
     if (sql.includes('FROM tenants WHERE provisioning_operation_id')) {
@@ -44,11 +120,14 @@ const crearDbFake = () => {
       const tenant = {
         id: params[0],
         nombre: params[1],
-        nit: params[2],
-        nrc: params[3],
-        api_key_hash: params[4],
+        nombre_comercial: params[2],
+        nit: params[3],
+        nrc: params[4],
+        // Alta POS: params[5]=api_key_hash, params[6]=operation_id.
+        // Alta plataforma (2026-10-10): api_key_hash NULL literal → 6 params.
+        api_key_hash: params.length > 6 ? params[5] : null,
         provisioning_status: 'pending_fiscal_setup',
-        provisioning_operation_id: params[5],
+        provisioning_operation_id: params.length > 6 ? params[6] : params[5],
         activo: true,
         last_pos_sync_at: null,
         creado_en: new Date().toISOString(),
@@ -136,7 +215,7 @@ const crearDbFake = () => {
     }
 
     // INSERT INTO establecimientos (solicitud de vínculo de sucursal)
-    if (sql.startsWith('INSERT INTO establecimientos')) {
+    if (sql.startsWith('INSERT INTO establecimientos') && !sql.includes('cod_estable_mh')) {
       const clave = `${params[0]}|${params[1]}`;
       if (establecimientos.has(clave)) {
         const err = new Error('duplicate key');
@@ -171,10 +250,89 @@ const crearDbFake = () => {
   const idActual = () => `id-${siguienteId++}`;
   const conteoEstablecimientos = () => establecimientos.size;
   const obtenerEstablecimiento = (tenantId, branchId) => establecimientos.get(`${tenantId}|${branchId}`);
+  const obtenerEstablecimientoPorId = (id) => establecimientos.get(`id:${id}`);
   const setConfiguracion = (tenantId, config) => configuraciones.set(tenantId, config);
   const contarConfiguraciones = () => configuraciones.size;
+  const obtenerConfiguracion = (tenantId) => configuraciones.get(tenantId);
+  const contarCorrelativos = () => correlativos.length;
+  const guardarUsuario = (tenantId, email, fila) => usuarios.set(`${tenantId}|${email.toLowerCase()}`, fila);
+  const obtenerUsuario = (tenantId, email) => usuarios.get(`${tenantId}|${String(email).toLowerCase()}`);
+  const contarUsuarios = () => usuarios.size;
 
-  return { query, obtener, marcarConfirmado, conteo, idActual, conteoEstablecimientos, obtenerEstablecimiento, setConfiguracion, contarConfiguraciones };
+  // Cliente de transacción: delega al mismo query fake (BEGIN/COMMIT/ROLLBACK
+  // son no-ops) — replica el shape de pg (query + release).
+  const getClient = async () => ({
+    query,
+    release: () => {},
+  });
+
+  return {
+    query,
+    getClient,
+    obtener,
+    marcarConfirmado,
+    conteo,
+    idActual,
+    conteoEstablecimientos,
+    obtenerEstablecimiento,
+    obtenerEstablecimientoPorId,
+    setConfiguracion,
+    contarConfiguraciones,
+    obtenerConfiguracion,
+    contarCorrelativos,
+    guardarUsuario,
+    obtenerUsuario,
+    contarUsuarios,
+  };
+};
+
+// Fake del módulo de usuarios (creación del administrador inicial del tenant).
+// Reproduce la unicidad por (tenant_id, email) del servicio real.
+const crearUsuariosFake = (db) => ({
+  crearUsuario: async ({ tenant_id, datos }) => {
+    if (!datos.password || String(datos.password).length < 8) {
+      throw { status: 400, mensaje: 'El password es requerido.' };
+    }
+    const email = String(datos.email).toLowerCase();
+    if (db.obtenerUsuario(tenant_id, email)) {
+      throw { status: 409, mensaje: 'Ya existe un usuario con ese email en este tenant.' };
+    }
+    const fila = {
+      id: `usr-${db.idActual()}`,
+      tenant_id,
+      email,
+      nombre: datos.nombre,
+      rol: datos.rol,
+      establecimiento_id: datos.establecimiento_id || null,
+    };
+    db.guardarUsuario(tenant_id, email, fila);
+    return fila;
+  },
+});
+
+// Establecimiento fiscal inicial del bootstrap (2026-10-10): la empresa nace
+// con una sucursal ready + correlativos + el admin asignado a ella.
+const ESTABLECIMIENTO_INICIAL = {
+  nombre: 'Casa Matriz',
+  direccion: 'Av. Principal 123, San Salvador',
+  departamento_cod: '06',
+  municipio_cod: '01',
+  cod_estable_mh: 'M001',
+  cod_punto_venta_mh: 'P001',
+  tipo_establecimiento: '02',
+};
+
+// Outbox fake con deduplicación por (operation_id, tipo_evento), igual que
+// el ON CONFLICT de eventos_provision.
+const crearOutboxFake = () => {
+  const mapa = new Map();
+  return {
+    eventos: () => [...mapa.values()],
+    publicarEvento: async (evento) => {
+      const clave = `${evento.operation_id}|${evento.tipo_evento}`;
+      if (!mapa.has(clave)) mapa.set(clave, evento);
+    },
+  };
 };
 
 // ─────────────────────────────────────────────
@@ -346,31 +504,255 @@ test('actualizarEstado valida tenant, operation_id y estado permitido', async ()
   );
 });
 
-test('crearTenantDesdePlataforma (DTE) crea tenant sin API Key y publica evento outbox', async () => {
+test('crearTenantDesdePlataforma (DTE) aplica el bootstrap completo: tenant + config + establecimiento + correlativos + admin asignado', async () => {
   const db = crearDbFake();
-  const eventos = [];
+  const auditoria = [];
+  const outbox = crearOutboxFake();
   const servicio = crearServicioProvisioning({
     db,
-    auditoria: async () => {},
-    outbox: {
-      publicarEvento: async (evento) => { eventos.push(evento); },
-    },
+    auditoria: async (entrada) => { auditoria.push(entrada); },
+    outbox,
   });
 
   const resultado = await servicio.crearTenantDesdePlataforma({
-    datos: { tenant_id: TENANT2, nombre: 'Empresa Desde DTE', nit: '0614-260967-201-7' },
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa Desde DTE',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      pin: '123456',
+      nombre_usuario: 'Admin Demo',
+      apellido: 'Inicial',
+      crear_usuario_pos: true,
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+    },
     operationId: OP2,
     usuario: { id: 'u1', rol: 'plataforma' },
   });
 
   assert.equal(resultado.tenant.provisioning_status, 'pending_fiscal_setup');
   assert.equal(resultado.api_key, null, 'el alta desde DTE no entrega API Key');
-  assert.equal(eventos.length, 1);
+  assert.equal(db.obtener(TENANT2).api_key_hash, null, 'sin clave generada desde DTE');
+
+  // Bootstrap completo: configuración, establecimiento ready y correlativos.
+  assert.equal(db.contarConfiguraciones(), 1, 'configuracion del emisor creada');
+  assert.equal(db.contarCorrelativos(), 22, 'correlativos: 11 tipos × 2 ambientes');
+  assert.equal(db.conteoEstablecimientos(), 1, 'establecimiento fiscal inicial creado');
+
+  // Admin con establecimiento ASIGNADO (nunca NULL → los mantenimientos operan).
+  const adminDte = db.obtenerUsuario(TENANT2, 'admin@demo.sv');
+  assert.ok(adminDte, 'el usuario administrador existe en el tenant DTE');
+  assert.equal(adminDte.rol, 'administrador');
+  assert.ok(adminDte.establecimiento_id, 'el admin queda asignado al establecimiento');
+  assert.ok(db.obtenerEstablecimientoPorId(adminDte.establecimiento_id), 'el establecimiento asignado existe');
+  assert.match(adminDte.password_hash, /^\$2[aby]\$\d{2}\$/, 'password_hash es bcrypt');
+  assert.equal(db.contarUsuarios(), 1);
+
+  // Dos eventos: TENANT_CREADO (proyección) + USUARIO_INICIAL (credenciales).
+  const eventos = outbox.eventos();
+  assert.equal(eventos.length, 2);
+  const tenantEvento = eventos.find((e) => e.tipo_evento === 'TENANT_CREADO');
+  const usuarioEvento = eventos.find((e) => e.tipo_evento === 'USUARIO_INICIAL');
+  assert.ok(tenantEvento, 'evento TENANT_CREADO publicado');
+  assert.ok(usuarioEvento, 'evento USUARIO_INICIAL publicado');
+  assert.equal(usuarioEvento.tenant_id, TENANT2);
+  assert.equal(usuarioEvento.payload.email, 'admin@demo.sv');
+  assert.equal(usuarioEvento.payload.rol, 'administrador');
+  assert.ok(!JSON.stringify(tenantEvento).includes('password'), 'TENANT_CREADO sin secretos');
+  const textoUsuarioEvento = JSON.stringify(usuarioEvento);
+  assert.ok(!textoUsuarioEvento.includes('ClaveInicial123!'), 'el password en claro NUNCA viaja al POS');
+  assert.ok(!textoUsuarioEvento.includes('123456'), 'el PIN en claro NUNCA viaja al POS');
+  assert.match(usuarioEvento.payload.password_hash, /^\$2[aby]\$\d{2}\$/, 'password_hash es bcrypt');
+  assert.match(usuarioEvento.payload.pin_hash, /^\$2[aby]\$\d{2}\$/, 'pin_hash es bcrypt');
+
+  assert.equal(auditoria.some((a) => a.evento === 'PROVISION_USUARIO_INICIAL'), true);
+  assert.ok(!JSON.stringify(auditoria).includes('ClaveInicial123!'), 'auditoría sin secretos');
+});
+
+test('crearTenantDesdePlataforma es idempotente: el reintento NO duplica tenant, config, establecimiento, correlativos, usuario ni eventos', async () => {
+  const db = crearDbFake();
+  const outbox = crearOutboxFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async () => {},
+    outbox,
+  });
+
+  const datos = {
+    tenant_id: TENANT2,
+    nombre: 'Empresa Desde DTE',
+    nit: '0614-260967-201-7',
+    email_admin: 'admin@demo.sv',
+    password: 'ClaveInicial123!',
+    pin: '123456',
+    nombre_usuario: 'Admin Demo',
+    crear_usuario_pos: true,
+    establecimiento: ESTABLECIMIENTO_INICIAL,
+  };
+
+  const primero = await servicio.crearTenantDesdePlataforma({ datos, operationId: OP2, usuario: { id: 'u1', rol: 'plataforma' } });
+  const repetido = await servicio.crearTenantDesdePlataforma({ datos, operationId: OP2, usuario: { id: 'u1', rol: 'plataforma' } });
+
+  assert.equal(primero.tenant.id, repetido.tenant.id);
+  assert.equal(db.conteo(), 1, 'no duplica el tenant');
+  assert.equal(db.contarUsuarios(), 1, 'no duplica el usuario administrador');
+  assert.equal(db.contarConfiguraciones(), 1, 'no duplica la configuración');
+  assert.equal(db.conteoEstablecimientos(), 1, 'no duplica el establecimiento');
+  assert.equal(db.contarCorrelativos(), 22, 'no duplica los correlativos');
+  assert.equal(outbox.eventos().length, 2, 'no duplica los eventos de provisión');
+});
+
+test('crearTenantDesdePlataforma sin toggle POS: crea solo el admin DTE (sin PIN, sin USUARIO_INICIAL)', async () => {
+  const db = crearDbFake();
+  const outbox = crearOutboxFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async () => {},
+    outbox,
+  });
+
+  const resultado = await servicio.crearTenantDesdePlataforma({
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa Solo DTE',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      nombre_usuario: 'Admin Demo',
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+      // Sin PIN ni crear_usuario_pos: la empresa no usará POS.
+    },
+    operationId: OP2,
+    usuario: { id: 'u1', rol: 'plataforma' },
+  });
+
+  assert.equal(resultado.tenant.provisioning_status, 'pending_fiscal_setup');
+  const admin = db.obtenerUsuario(TENANT2, 'admin@demo.sv');
+  assert.ok(admin, 'el admin DTE se crea SIEMPRE');
+  assert.ok(admin.establecimiento_id, 'el admin queda asignado aunque no haya POS');
+  assert.equal(db.contarConfiguraciones(), 1, 'la configuración se crea aunque no haya POS');
+
+  const eventos = outbox.eventos();
+  assert.equal(eventos.length, 1, 'solo TENANT_CREADO — sin usuario POS');
   assert.equal(eventos[0].tipo_evento, 'TENANT_CREADO');
-  assert.equal(eventos[0].tenant_id, TENANT2);
-  assert.ok(!JSON.stringify(eventos[0]).includes('password'), 'payload sin secretos');
-  const hashAlmacenado = db.obtener(TENANT2).api_key_hash;
-  assert.equal(hashAlmacenado, null, 'sin clave generada desde DTE');
+  assert.ok(!JSON.stringify(eventos).includes('hash'), 'sin hashes ni credenciales POS');
+});
+
+test('crearTenantDesdePlataforma rechaza payloads inválidos (credenciales, PIN y establecimiento faltante)', async () => {
+  const db = crearDbFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async () => {},
+    outbox: { publicarEvento: async () => {} },
+  });
+
+  await assert.rejects(
+    servicio.crearTenantDesdePlataforma({
+      datos: {
+        tenant_id: TENANT2, nombre: 'Empresa Desde DTE', nit: '0614-260967-201-7',
+        establecimiento: ESTABLECIMIENTO_INICIAL,
+      },
+      operationId: OP2,
+      usuario: { id: 'u1', rol: 'plataforma' },
+    }),
+    (err) => err.status === 400 && err.mensaje.includes('email del administrador')
+  );
+
+  await assert.rejects(
+    servicio.crearTenantDesdePlataforma({
+      datos: {
+        tenant_id: TENANT2,
+        nombre: 'Empresa Desde DTE',
+        nit: '0614-260967-201-7',
+        email_admin: 'admin@demo.sv',
+        password: 'corta',
+        pin: '123456',
+        nombre_usuario: 'Admin Demo',
+        establecimiento: ESTABLECIMIENTO_INICIAL,
+      },
+      operationId: OP2,
+      usuario: { id: 'u1', rol: 'plataforma' },
+    }),
+    (err) => err.status === 400 && /password/i.test(err.mensaje)
+  );
+
+  await assert.rejects(
+    servicio.crearTenantDesdePlataforma({
+      datos: {
+        tenant_id: TENANT2,
+        nombre: 'Empresa Desde DTE',
+        nit: '0614-260967-201-7',
+        email_admin: 'admin@demo.sv',
+        password: 'ClaveInicial123!',
+        pin: '12',
+        nombre_usuario: 'Admin Demo',
+        crear_usuario_pos: true,
+        establecimiento: ESTABLECIMIENTO_INICIAL,
+      },
+      operationId: OP2,
+      usuario: { id: 'u1', rol: 'plataforma' },
+    }),
+    (err) => err.status === 400 && /PIN/i.test(err.mensaje)
+  );
+
+  // Toggle POS activo sin PIN → 400 (el PIN es obligatorio cuando hay POS).
+  await assert.rejects(
+    servicio.crearTenantDesdePlataforma({
+      datos: {
+        tenant_id: TENANT2,
+        nombre: 'Empresa Desde DTE',
+        nit: '0614-260967-201-7',
+        email_admin: 'admin@demo.sv',
+        password: 'ClaveInicial123!',
+        nombre_usuario: 'Admin Demo',
+        crear_usuario_pos: true,
+        establecimiento: ESTABLECIMIENTO_INICIAL,
+      },
+      operationId: OP2,
+      usuario: { id: 'u1', rol: 'plataforma' },
+    }),
+    (err) => err.status === 400 && /PIN/i.test(err.mensaje)
+  );
+
+  // Sin establecimiento fiscal inicial → 400 (bootstrap incompleto).
+  await assert.rejects(
+    servicio.crearTenantDesdePlataforma({
+      datos: {
+        tenant_id: TENANT2,
+        nombre: 'Empresa Desde DTE',
+        nit: '0614-260967-201-7',
+        email_admin: 'admin@demo.sv',
+        password: 'ClaveInicial123!',
+        nombre_usuario: 'Admin Demo',
+      },
+      operationId: OP2,
+      usuario: { id: 'u1', rol: 'plataforma' },
+    }),
+    (err) => err.status === 400 && /establecimiento/i.test(err.mensaje)
+  );
+
+  // Códigos MH inválidos → 400.
+  await assert.rejects(
+    servicio.crearTenantDesdePlataforma({
+      datos: {
+        tenant_id: TENANT2,
+        nombre: 'Empresa Desde DTE',
+        nit: '0614-260967-201-7',
+        email_admin: 'admin@demo.sv',
+        password: 'ClaveInicial123!',
+        nombre_usuario: 'Admin Demo',
+        establecimiento: { ...ESTABLECIMIENTO_INICIAL, cod_estable_mh: 'ABC' },
+      },
+      operationId: OP2,
+      usuario: { id: 'u1', rol: 'plataforma' },
+    }),
+    (err) => err.status === 400 && /cod_estable_mh/i.test(err.mensaje)
+  );
+
+  assert.equal(db.conteo(), 0, 'ningún tenant creado con payload inválido');
+  assert.equal(db.contarUsuarios(), 0);
+  assert.equal(db.contarConfiguraciones(), 0, 'nada del bootstrap se persiste si falla la validación');
 });
 
 test('listarEstadoProvision separa alcance plataforma vs administrador', async () => {

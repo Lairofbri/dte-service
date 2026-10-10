@@ -126,8 +126,50 @@ const crearTenantDesdePlataforma = async (req, res) => {
         nombre: resultado.tenant.nombre,
         provisioning_status: resultado.tenant.provisioning_status,
       },
-      'Empresa creada. El POS la recibirá por evento de provisión.'
+      'Empresa creada. Usuario administrador inicial creado en DTE; POS lo recibirá por evento de provisión.'
     );
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
+/** PATCH /api/provisioning/tenants/:tenantId — editar datos de la empresa. */
+const actualizarTenantDesdePlataforma = async (req, res) => {
+  if (!req.usuario || !req.usuario.tenant_id) {
+    return noAutenticado(res, 'Autenticación de usuario requerida.');
+  }
+  if (req.usuario.rol !== 'plataforma') {
+    return sinPermiso(res, 'Solo usuarios de plataforma pueden editar empresas.');
+  }
+  try {
+    const tenant = await service.actualizarTenantDesdePlataforma({
+      tenantId: req.params.tenantId,
+      datos: req.body,
+      usuario: req.usuario,
+      ip: req.ip,
+    });
+    return exito(res, tenant, 'Datos de la empresa actualizados.');
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
+/** PATCH /api/provisioning/tenants/:tenantId/admin — editar admin inicial. */
+const actualizarAdminDesdePlataforma = async (req, res) => {
+  if (!req.usuario || !req.usuario.tenant_id) {
+    return noAutenticado(res, 'Autenticación de usuario requerida.');
+  }
+  if (req.usuario.rol !== 'plataforma') {
+    return sinPermiso(res, 'Solo usuarios de plataforma pueden editar el administrador de una empresa.');
+  }
+  try {
+    const admin = await service.actualizarAdminDesdePlataforma({
+      tenantId: req.params.tenantId,
+      datos: req.body,
+      usuario: req.usuario,
+      ip: req.ip,
+    });
+    return exito(res, admin, 'Administrador actualizado.');
   } catch (err) {
     return manejarError(res, err);
   }
@@ -165,5 +207,7 @@ module.exports = {
   confirmarEvento,
   obtenerEstadoFiscal,
   crearTenantDesdePlataforma,
+  actualizarTenantDesdePlataforma,
+  actualizarAdminDesdePlataforma,
   listarEstadoProvision,
 };
