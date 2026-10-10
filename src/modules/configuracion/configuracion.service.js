@@ -300,6 +300,19 @@ const crearConfiguracion = async ({ datos, tenant_id }) => {
 };
 
 /**
+ * ¿Debe invalidarse el token de Hacienda cacheado?
+ * El token se emite contra un ambiente (pruebas/00 o producción/01) con
+ * credenciales dadas; si cualquiera de los dos lados cambia, el token
+ * cacheado deja de corresponder y hay que renovarlo en la siguiente llamada.
+ */
+const debeInvalidarToken = ({ datos, ambienteActual }) =>
+  Boolean(
+    datos.usuario_hacienda ||
+    datos.password_hacienda ||
+    (datos.ambiente !== undefined && datos.ambiente !== ambienteActual)
+  );
+
+/**
  * Actualizar la configuración existente
  * Solo actualiza los campos enviados (PATCH semántico)
  * Re-encripta las credenciales si se actualizan
@@ -308,7 +321,7 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
   if (!tenant_id) {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para actualizar la configuración.' };
   }
-  await obtenerConfiguracion({ tenant_id });
+  const actual = await obtenerConfiguracion({ tenant_id });
 
   // Normalizar formato visual (NIT/NRC/teléfono → solo dígitos)
   datos = normalizarFormato(datos);
@@ -346,23 +359,22 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
   if (datos.usuario_hacienda) {
     campos.push(`usuario_hacienda = $${idx++}`);
     valores.push(encriptar(datos.usuario_hacienda));
-    // Si cambian las credenciales, invalidar el token cacheado
-    campos.push(`token_hacienda = $${idx++}`);
-    valores.push(null);
-    campos.push(`token_expira_en = $${idx++}`);
-    valores.push(null);
   }
 
   if (datos.password_hacienda) {
     campos.push(`password_hacienda = $${idx++}`);
     valores.push(encriptar(datos.password_hacienda));
-    // Si cambian las credenciales, invalidar el token cacheado
-    if (!datos.usuario_hacienda) {
-      campos.push(`token_hacienda = $${idx++}`);
-      valores.push(null);
-      campos.push(`token_expira_en = $${idx++}`);
-      valores.push(null);
-    }
+  }
+
+  // El token de Hacienda es válido solo para el par credenciales + ambiente:
+  // se invalida si cambian las credenciales o si cambia el ambiente (un token
+  // de pruebas no sirve en producción ni viceversa). Una sola invalidación
+  // por operación, sin duplicar columnas.
+  if (debeInvalidarToken({ datos, ambienteActual: actual.ambiente })) {
+    campos.push(`token_hacienda = $${idx++}`);
+    valores.push(null);
+    campos.push(`token_expira_en = $${idx++}`);
+    valores.push(null);
   }
 
   if (campos.length === 0) {
@@ -521,6 +533,9 @@ module.exports = {
   resolverDescripcionActividad,
   // Exportado para tests unitarios (normalización de formato visual).
   normalizarFormato,
+  // Exportado para tests unitarios: invalidación del token de Hacienda
+  // por credenciales o cambio de ambiente.
+  debeInvalidarToken,
   // Exportado para tests unitarios de seguridad (redacción). No altera la API.
   formatearParaRespuesta,
 };

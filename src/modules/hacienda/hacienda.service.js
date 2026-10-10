@@ -47,6 +47,19 @@ const obtenerAmbienteTenant = async (tenant_id) => {
   return configuracion.ambiente || AMBIENTE_HACIENDA;
 };
 
+// Hosts oficiales del MH por ambiente. Las envs de URL pueden venir con
+// cualquiera de los dos; en cada llamada se normalizan al ambiente ACTUAL
+// del tenant para que cambiar 00 ↔ 01 desde Configuración funcione sin
+// tocar el despliegue: el host y el campo "ambiente" deben coincidir.
+const HOST_HACIENDA_PRUEBAS = 'apitest.dtes.mh.gob.sv';
+const HOST_HACIENDA_PROD     = 'api.dtes.mh.gob.sv';
+
+const urlParaAmbiente = (url, ambiente) => {
+  if (!url) return url;
+  if (ambiente === '01') return url.split(HOST_HACIENDA_PRUEBAS).join(HOST_HACIENDA_PROD);
+  return url.split(HOST_HACIENDA_PROD).join(HOST_HACIENDA_PRUEBAS);
+};
+
 // ─────────────────────────────────────────────
 // HELPERS INTERNOS
 // ─────────────────────────────────────────────
@@ -125,7 +138,7 @@ const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
     params.append('user', credenciales.usuario);
     params.append('pwd',  credenciales.password);
 
-    const respuesta = await axios.post(URL_AUTH_HACIENDA, params, {
+    const respuesta = await axios.post(urlParaAmbiente(URL_AUTH_HACIENDA, ambiente), params, {
       timeout: parseInt(TIMEOUT_HACIENDA, 10),
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -247,7 +260,7 @@ const transmitirDTE = async ({
       });
 
       const respuesta = await clienteHacienda.post(
-        URL_RECEPCION_HACIENDA,
+        urlParaAmbiente(URL_RECEPCION_HACIENDA, ambiente),
         body,
         {
           headers: {
@@ -364,11 +377,11 @@ const transmitirDTE = async ({
  * @param {string} tipoDte          — tipo de DTE
  */
 const consultarDTE = async ({ codigoGeneracion, tipoDte, tenant_id }) => {
-  const { token } = await autenticar({ tenant_id });
+  const { token, ambiente } = await autenticar({ tenant_id });
 
   try {
     const respuesta = await clienteHacienda.post(
-      URL_CONSULTA_HACIENDA,
+      urlParaAmbiente(URL_CONSULTA_HACIENDA, ambiente),
       {
         nitEmisor:        (await configuracionService.obtenerConfiguracion({ tenant_id })).nit.replace(/-/g, ''),
         tdte:             tipoDte,
@@ -407,11 +420,11 @@ const consultarDTE = async ({ codigoGeneracion, tipoDte, tenant_id }) => {
  * @param {string} documentoFirmado — JSON del evento de contingencia firmado
  */
 const notificarContingencia = async ({ documentoFirmado, tenant_id }) => {
-  const { token } = await autenticar({ tenant_id });
+  const { token, ambiente } = await autenticar({ tenant_id });
 
   try {
     const respuesta = await clienteHacienda.post(
-      URL_CONTINGENCIA_HACIENDA,
+      urlParaAmbiente(URL_CONTINGENCIA_HACIENDA, ambiente),
       {
         nit:      (await configuracionService.obtenerConfiguracion({ tenant_id })).nit.replace(/-/g, ''),
         documento: documentoFirmado,
@@ -467,7 +480,7 @@ const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
 
   try {
     const respuesta = await clienteHacienda.post(
-      URL_ANULACION_HACIENDA,
+      urlParaAmbiente(URL_ANULACION_HACIENDA, ambiente),
       {
         ambiente,
         idEnvio,
@@ -537,7 +550,7 @@ const transmitirLote = async ({ documentos, nitEmisor, ambiente, tenant_id }) =>
     });
 
     const respuesta = await clienteHacienda.post(
-      URL_RECEPCION_HACIENDA.replace('recepciondte', 'recepcionlote/'),
+      urlParaAmbiente(URL_RECEPCION_HACIENDA, ambiente).replace('recepciondte', 'recepcionlote/'),
       {
         ambiente,
         idEnvio,
@@ -587,10 +600,10 @@ const consultarLote = async ({ codigoLote, tenant_id }) => {
   if (!tenant_id) throw { status: 400, mensaje: 'Tenant autenticado requerido para consultar un lote.' };
   if (!codigoLote) throw { status: 400, mensaje: 'El código de lote es requerido.' };
 
-  const { token } = await autenticar({ tenant_id });
+  const { token, ambiente } = await autenticar({ tenant_id });
 
   // URL: /fesv/recepcion/consultadtelote/{codigoLote}
-  const url = `${URL_CONSULTA_HACIENDA.replace('consultadte/', '')}consultadtelote/${codigoLote}`;
+  const url = `${urlParaAmbiente(URL_CONSULTA_HACIENDA, ambiente).replace('consultadte/', '')}consultadtelote/${codigoLote}`;
 
   try {
     const respuesta = await clienteHacienda.get(url, {
@@ -622,4 +635,5 @@ module.exports = {
   anularDTE,
   transmitirLote,
   consultarLote,
+  urlParaAmbiente,
 };
