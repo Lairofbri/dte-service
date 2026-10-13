@@ -30,6 +30,12 @@ const itemSchema = Joi.object({
   tipo_item:  Joi.number().integer().valid(1, 2, 3, 4).optional().default(2),
   // CAT-014: 59=Unidad, 99=Otro, etc.
   uni_medida: Joi.number().integer().min(1).max(99).optional().default(59),
+  // Tratamiento fiscal por ítem (campo oficial del JSON: ventaNoSuj/ventaExenta).
+  // El frontend DTE las envía; el POS puede omitirlas (default 0).
+  venta_no_suj: Joi.number().min(0).optional().default(0),
+  venta_exenta: Joi.number().min(0).optional().default(0),
+  // FSE (DTE-14): el ítem lleva "compra" en vez de gravada/no sujeta/exenta.
+  compra:       Joi.number().min(0).optional().default(0),
 }).or('descripcion', 'nombre_producto');
 
 // Pago individual

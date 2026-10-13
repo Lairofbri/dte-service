@@ -338,17 +338,20 @@ const construirItem = (item, numItem, tipoDte) => {
   const descuento = Number(item.descuento)       || 0;
 
   const subtotalBruto = cantidad * precioUni;
-  const baseGravable  = subtotalBruto - descuento;
+  // Tratamiento fiscal por ítem (campos oficiales ventaNoSuj/ventaExenta).
+  // Default 0 → el comportamiento histórico (todo gravado) se mantiene intacto.
+  const ventaNoSuj  = redondear8(Math.max(0, Number(item.venta_no_suj)  || 0));
+  const ventaExenta = redondear8(Math.max(0, Number(item.venta_exenta) || 0));
   let   ventaGravada  = 0;
   let   ivaItem       = null;
 
   if (tipoDte === '01') {
-    // FCF: precio incluye IVA — ventaGravada es el bruto CON IVA (como FCF reales aceptados); ivaItem desglosa el IVA de la base descontada
-    ventaGravada = redondear8(subtotalBruto);
-    ivaItem      = redondear8(baseGravable - baseGravable / 1.13);
+    // FCF: precio incluye IVA — ventaGravada es el bruto CON IVA (como FCF reales aceptados) menos no sujeta/exenta; ivaItem desglosa el IVA de la base gravada
+    ventaGravada = redondear8(Math.max(0, subtotalBruto - ventaNoSuj - ventaExenta));
+    ivaItem      = redondear8(ventaGravada - ventaGravada / 1.13);
   } else {
     // CCF, NC, ND: precio sin IVA — 8 decimales a nivel ítem; ventaGravada es el bruto completo (el descuento vive en montoDescu/resumen)
-    ventaGravada = redondear8(subtotalBruto);
+    ventaGravada = redondear8(Math.max(0, subtotalBruto - ventaNoSuj - ventaExenta));
   }
 
   const base = {
@@ -362,8 +365,8 @@ const construirItem = (item, numItem, tipoDte) => {
     uniMedida:       item.uni_medida || 99,
     precioUni:       precioUni,
     montoDescu:      descuento,
-    ventaNoSuj:      0.0,
-    ventaExenta:     0.0,
+    ventaNoSuj:      ventaNoSuj,
+    ventaExenta:     ventaExenta,
     ventaGravada:    ventaGravada,
     tributos:        tipoDte === '03' || tipoDte === '05' || tipoDte === '06' ? ['20'] : null,
     noGravado:       0.0,
@@ -402,7 +405,8 @@ const construirItemFSE = (item, numItem) => {
     descripcion:  item.descripcion || item.nombre_producto || '',
     precioUni,
     montoDescu:   descuento,
-    compra:       redondear8((cantidad * precioUni) - descuento),
+    // El frontend DTE puede enviar "compra" explícito; el POS lo deriva de precio×cantidad
+    compra:       redondear8(Number(item.compra) || ((cantidad * precioUni) - descuento)),
   };
 };
 

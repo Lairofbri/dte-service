@@ -23,6 +23,7 @@ const establecimientosRoutes  = require('./modules/establecimientos/establecimie
 const usuariosRoutes          = require('./modules/usuarios/usuarios.routes');
 const authRoutes              = require('./modules/auth/auth.routes');
 const clientesRoutes          = require('./modules/clientes/clientes.routes');
+const productosRoutes         = require('./modules/productos/productos.routes');
 const tenantsRoutes           = require('./modules/tenants/tenants.routes');
 const { routerInterno, routerApi } = require('./modules/provisioning/provisioning.routes');
 
@@ -120,6 +121,7 @@ app.use((req, _res, next) => {
 app.use('/api/auth',          authRoutes);
 app.use('/api/tenants',       tenantsRoutes);
 app.use('/api/clientes',      clientesRoutes);
+app.use('/api/productos',     productosRoutes);
 
 app.use('/api/configuracion', configuracionRoutes);
 app.use('/api/catalogos',     catalogosRoutes);
