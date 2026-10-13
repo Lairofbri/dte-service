@@ -235,7 +235,15 @@ const obtenerEstadoFirmaTenant = async ({ tenant_id, nit = null }) => {
 
 /**
  * Parsea los errores del firmador para dar mensajes útiles
- * Basado en los códigos de error del manual
+ * Basado en los códigos de error del manual (svfe)
+ *
+ * 803 — no existe llave pública del NIT en el firmador
+ * 809 — formato de NIT no válido
+ * 810 — certificado no encontrado
+ * 811 — contraseña de certificado incorrecta
+ * 812 — certificado/llave inválidos (el firmador falla al procesar el
+ *       documento del NIT; suele ser un archivo corrupto en el contenedor
+ *       svfe, p.ej. un binario leído como XML)
  */
 const parsearErrorFirmador = (data) => {
   if (!data?.body) return 'Error desconocido del firmador.';
@@ -244,19 +252,28 @@ const parsearErrorFirmador = (data) => {
     ? data.body.mensaje
     : [data.body.mensaje || 'Error del firmador.'];
 
+  const detalle = mensajes.join(', ');
+
   // Códigos de error comunes del firmador
   const codigo = data.body.codigo;
-  if (codigo === '809') return `Formato de NIT no válido: ${mensajes.join(', ')}`;
+  if (codigo === '803') {
+    return `El firmador no tiene la llave pública de este NIT (${detalle}). Verifica que el certificado esté cargado en el servicio de firma.`;
+  }
+  if (codigo === '809') return `Formato de NIT no válido: ${detalle}`;
   if (codigo === '810') return 'Certificado no encontrado. Verifica que el certificado esté instalado.';
   if (codigo === '811') return 'Contraseña de certificado incorrecta.';
+  if (codigo === '812') {
+    return `El firmador rechazó el documento: certificado o llave del NIT inválidos (${detalle}). Revisa el contenedor svfe en el hosting y reinicia el servicio de firma.`;
+  }
 
-  return mensajes.join(', ');
+  return `El firmador devolvió un error (código ${codigo || 'desconocido'}): ${detalle}`;
 };
 
 module.exports = {
   firmarDTE,
   verificarFirmador,
   obtenerEstadoFirmaTenant,
-  // Exportado para tests unitarios (headers de autenticación).
+  // Exportados para tests unitarios.
   clienteFirmador,
+  parsearErrorFirmador,
 };
