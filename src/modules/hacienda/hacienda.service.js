@@ -102,6 +102,38 @@ const parsearErrorHacienda = (err) => {
   };
 };
 
+// ─────────────────────────────────────────────
+// MENSAJES DE RECHAZO DEL MH (POST /seguridad/auth)
+// Códigos observados en vivo contra apitest/api:
+//   101 → el usuario no existe / no está habilitado como usuario de aplicación
+//   106 → credenciales inválidas (contraseña incorrecta)
+// El resto proviene del manual técnico del MH. Se traducen a mensajes
+// accionables — el detalle crudo se loguea, nunca se expone sin traducir.
+// ─────────────────────────────────────────────
+const MENSAJES_AUTENTICACION = {
+  '100': 'Usuario de Hacienda incorrecto.',
+  '101': 'Hacienda no reconoce el usuario de la aplicación (código 101). Verifica que el NIT del emisor esté habilitado como usuario de aplicación en el MH.',
+  '102': 'No se pudo autenticar el usuario en Hacienda (código 102). Verifica las credenciales.',
+  '103': 'La contraseña de Hacienda expiró (código 103). Genera una nueva en el portal del MH.',
+  '106': 'Contraseña de Hacienda incorrecta (código 106). Verifícala e intenta de nuevo.',
+};
+
+/**
+ * Compone el mensaje accionable para un rechazo de autenticación del MH.
+ * Si el código es desconocido, usa la descripción cruda del MH como respaldo.
+ * NUNCA incluye credenciales — solo el motivo que devolvió el MH.
+ */
+const mensajeRechazo = ({ codigo, descripcion } = {}) => {
+  const clave = codigo !== undefined && codigo !== null ? String(codigo) : '';
+  if (MENSAJES_AUTENTICACION[clave]) return MENSAJES_AUTENTICACION[clave];
+
+  if (descripcion) {
+    return `Hacienda rechazó las credenciales${clave ? ` (código ${clave})` : ''}: ${descripcion}.`;
+  }
+
+  return 'Hacienda rechazó las credenciales. Verifica usuario y contraseña.';
+};
+
 // ═════════════════════════════════════════════
 // AUTENTICACIÓN
 // ═════════════════════════════════════════════
@@ -148,13 +180,23 @@ const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
 
     // Verificar respuesta exitosa de Hacienda
     if (respuesta.data?.status !== 'OK' || !respuesta.data?.body?.token) {
+      // El MH responde 200 con el rechazo en el body: {"status":"ERROR",
+      // "body":{"codigoMsg":"101","descripcionMsg":"..."}}. Se conserva el
+      // motivo para diagnóstico (antes se descartaba y todo error lucía igual).
+      const codigo      = respuesta.data?.body?.codigoMsg || respuesta.data?.codigoMsg || null;
+      const descripcion = respuesta.data?.body?.descripcionMsg || respuesta.data?.descripcionMsg || null;
+
       logger.warn('Hacienda rechazó las credenciales', {
         status: respuesta.data?.status,
+        codigo,
+        descripcion,
         // NUNCA loguear las credenciales
       });
+
       throw {
         status:  401,
-        mensaje: 'Hacienda rechazó las credenciales. Verifica usuario y contraseña.',
+        mensaje: mensajeRechazo({ codigo, descripcion }),
+        codigo,
       };
     }
 
@@ -193,7 +235,11 @@ const autenticar = async ({ forzarRenovacion = false, tenant_id } = {}) => {
     logger.error('Error al autenticar con Hacienda', errorInfo);
 
     if (errorInfo.status_http === 401 || errorInfo.status_http === 403) {
-      throw { status: 401, mensaje: 'Credenciales de Hacienda inválidas.' };
+      throw {
+        status:  401,
+        mensaje: mensajeRechazo({ codigo: errorInfo.codigo, descripcion: errorInfo.descripcion }),
+        codigo:  errorInfo.codigo || null,
+      };
     }
 
     if (esErrorConexion(err)) {
@@ -636,4 +682,6 @@ module.exports = {
   transmitirLote,
   consultarLote,
   urlParaAmbiente,
+  // Exportado para tests unitarios: traducción de rechazos de autenticación.
+  mensajeRechazo,
 };

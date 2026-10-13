@@ -326,6 +326,13 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
   // Normalizar formato visual (NIT/NRC/teléfono → solo dígitos)
   datos = normalizarFormato(datos);
 
+  // SEGURIDAD/UX: las credenciales que se guardan no deben arrastrar
+  // espacios, saltos de línea ni otros caracteres invisibles típicos de
+  // copiar y pegar — rompen la autenticación contra el MH sin ninguna pista.
+  // (El MH compara la contraseña literalmente; un espacio final = rechazo.)
+  if (typeof datos.usuario_hacienda === 'string') datos.usuario_hacienda = datos.usuario_hacienda.trim();
+  if (typeof datos.password_hacienda === 'string') datos.password_hacienda = datos.password_hacienda.trim();
+
   // SEGURIDAD: si llega codigo_actividad, la descripción se resuelve del
   // catálogo oficial (CAT-019) y se guarda junto con el código.
   // Sin código (solo descripción), se conserva el valor enviado.

@@ -115,3 +115,31 @@ test('sin credenciales configuradas → 400 "no hay credenciales"', async () => 
     (err) => err.status === 400 && err.mensaje.includes('No hay credenciales')
   );
 });
+
+test('actualizarConfiguracion: usuario/contraseña se guardan SIN espacios invisibles (trim)', async () => {
+  const llamadas = [];
+  const queryMock = async (text, params) => {
+    llamadas.push({ text, params });
+    return { rows: [filaConfiguracion(encriptar('usuario@demo.sv'), encriptar('pass-vieja'))] };
+  };
+  const { actualizarConfiguracion } = cargarService({ queryMock });
+  const { desencriptar } = require('../../src/config/crypto');
+
+  await actualizarConfiguracion({
+    datos: {
+      // Espacios, tab y salto de línea al copiar/pegar — deben limpiarse.
+      usuario_hacienda:  '  06232711251022  ',
+      password_hacienda: '  Martinica1_\n',
+    },
+    tenant_id: 'a1000000-0000-4000-8000-000000000001',
+  });
+
+  const update = llamadas.find((l) => l.text.startsWith('UPDATE configuracion'));
+  assert.ok(update, 'se emitió el UPDATE de configuración');
+
+  const cifrados = update.params.filter((p) => typeof p === 'string' && p.startsWith('enc:v2:'));
+  const planos = cifrados.map(desencriptar);
+
+  // Sin espacios residuales: el MH compara la contraseña literalmente.
+  assert.deepEqual(planos, ['06232711251022', 'Martinica1_']);
+});

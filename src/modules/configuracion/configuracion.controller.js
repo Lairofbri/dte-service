@@ -115,9 +115,10 @@ const testHacienda = async (req, res) => {
       // NO incluir el token en la respuesta
     });
   }   catch (err) {
-    // Error controlado del service (ej: credenciales inválidas → 400)
+    // Error controlado del service (ej: credenciales inválidas → 401 con el
+    // motivo del MH ya traducido). Se adjunta el código MH para diagnóstico.
     if (err.status && err.mensaje) {
-      return error(res, err.mensaje, err.status);
+      return error(res, err.mensaje, err.status, err.codigo ? { codigo: err.codigo } : {});
     }
     // Error de credenciales rechazadas por Hacienda → problema del cliente
     if (err.response && err.response.status === 401) {

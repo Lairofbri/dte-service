@@ -26,11 +26,14 @@ const creado = (res, data = null, mensaje = 'Creado exitosamente.') => {
 
 /**
  * Error del cliente 400-409
+ * `extra` permite adjuntar campos de diagnóstico seguros (ej: codigo del MH).
+ * NUNCA incluir credenciales ni datos sensibles.
  */
-const error = (res, mensaje = 'Error en la solicitud.', status = 400) => {
+const error = (res, mensaje = 'Error en la solicitud.', status = 400, extra = {}) => {
   return res.status(status).json({
     ok:      false,
     mensaje,
+    ...extra,
   });
 };
 

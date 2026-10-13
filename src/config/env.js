@@ -54,17 +54,24 @@ module.exports = {
     return clave;
   })(),
 
-  // ── Hacienda — solo URLs e infraestructura ──
+  // ── Hacienda — URLs OFICIALES del MH (templates) ──
   // Los datos del emisor (NIT, nombre, credenciales) viven en la BD
-  // tabla configuracion — nunca en variables de entorno
-  // Esto permite vender el servicio a múltiples clientes
-  // sin cambiar el código — solo cambia la BD
+  // tabla configuracion — nunca en variables de entorno.
+  //
+  // MULTI-EMPRESA: el ambiente es POR EMPRESA (configuracion.ambiente,
+  // editable desde el panel: 00 = pruebas, 01 = producción). En cada
+  // llamada (auth, recepción, consulta, contingencia, anulación, lotes)
+  // el servicio normaliza el HOST al ambiente de la empresa
+  // (urlParaAmbiente): apitest.dtes.mh.gob.sv ↔ api.dtes.mh.gob.sv.
+  // Por eso NO hace falta tocar estas variables para que cada empresa
+  // use su ambiente — son opcionales y apuntan a los hosts oficiales.
+  // Solo se definen si algún día el MH cambiara de host/path.
   AMBIENTE_HACIENDA:         opcional('AMBIENTE_HACIENDA', '00'),
-  URL_AUTH_HACIENDA:         requerida('URL_AUTH_HACIENDA'),
-  URL_RECEPCION_HACIENDA:    requerida('URL_RECEPCION_HACIENDA'),
-  URL_CONSULTA_HACIENDA:     requerida('URL_CONSULTA_HACIENDA'),
-  URL_CONTINGENCIA_HACIENDA: requerida('URL_CONTINGENCIA_HACIENDA'),
-  URL_ANULACION_HACIENDA:    requerida('URL_ANULACION_HACIENDA'),
+  URL_AUTH_HACIENDA:         opcional('URL_AUTH_HACIENDA', 'https://apitest.dtes.mh.gob.sv/seguridad/auth'),
+  URL_RECEPCION_HACIENDA:    opcional('URL_RECEPCION_HACIENDA', 'https://apitest.dtes.mh.gob.sv/fesv/recepciondte'),
+  URL_CONSULTA_HACIENDA:     opcional('URL_CONSULTA_HACIENDA', 'https://apitest.dtes.mh.gob.sv/fesv/recepcion/consultadte/'),
+  URL_CONTINGENCIA_HACIENDA: opcional('URL_CONTINGENCIA_HACIENDA', 'https://apitest.dtes.mh.gob.sv/fesv/contingencia'),
+  URL_ANULACION_HACIENDA:    opcional('URL_ANULACION_HACIENDA', 'https://apitest.dtes.mh.gob.sv/fesv/anulardte'),
   TIMEOUT_HACIENDA:          opcionalInt('TIMEOUT_HACIENDA', 8000),
   MAX_REINTENTOS_HACIENDA:   opcionalInt('MAX_REINTENTOS_HACIENDA', 2),
 
