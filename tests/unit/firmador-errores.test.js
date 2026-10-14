@@ -32,16 +32,17 @@ test('803 — no existe llave pública del NIT: mensaje accionable y menciona el
     status: 'ERROR',
     body: { codigo: '803', mensaje: 'No existe llave publica para este nit' },
   });
-  assert.match(mensaje, /803|llave pública/, 'identifica el problema de llave');
+  assert.match(mensaje, /llave pública/, 'identifica el problema de llave');
   assert.match(mensaje, /certificado/, 'sugiere verificar el certificado');
 });
 
-test('809 — NIT con formato inválido', () => {
+test('809 — llave privada requerida (contraseña de firma vacía): mensaje accionable', () => {
   const { parsearErrorFirmador } = cargarServicio();
-  assert.match(
-    parsearErrorFirmador({ body: { codigo: '809', mensaje: 'NIT inválido' } }),
-    /Formato de NIT/
-  );
+  const mensaje = parsearErrorFirmador({
+    body: { codigo: '809', mensaje: 'Clave privada es requerida' },
+  });
+  assert.match(mensaje, /contraseña de firma/, 'indica qué falta');
+  assert.match(mensaje, /Clave privada es requerida/, 'conserva el mensaje real del svfe');
 });
 
 test('810 — certificado no encontrado', () => {
@@ -52,20 +53,21 @@ test('810 — certificado no encontrado', () => {
   );
 });
 
-test('811 — contraseña de certificado incorrecta', () => {
+test('811 — no pudo procesar el documento: incluye el mensaje crudo (caso real del svfe)', () => {
   const { parsearErrorFirmador } = cargarServicio();
-  assert.match(
-    parsearErrorFirmador({ body: { codigo: '811', mensaje: 'Password incorrecta' } }),
-    /Contraseña de certificado incorrecta/
-  );
+  const mensaje = parsearErrorFirmador({
+    body: { codigo: '811', mensaje: 'Problemas al convertir String a Json' },
+  });
+  assert.match(mensaje, /no pudo procesar el documento/, 'contexto real del svfe v20260316');
+  assert.match(mensaje, /Problemas al convertir String a Json/, 'nunca inventar el significado del código');
 });
 
-test('812 — certificado/llave inválidos: mensaje accionable para el operador de hosting', () => {
+test('812 — error interno del firmador: mensaje accionable para el operador de hosting', () => {
   const { parsearErrorFirmador } = cargarServicio();
   const mensaje = parsearErrorFirmador({
     body: { codigo: '812', mensaje: "Unexpected character 'R' (code 82) in prolog; expected '<'" },
   });
-  assert.match(mensaje, /certificado o llave del NIT inválidos/, 'traduce el fallo interno del svfe');
+  assert.match(mensaje, /error interno/, 'traduce el fallo interno del svfe');
   assert.match(mensaje, /hosting|svfe/, 'apunta a revisar el contenedor remoto');
 });
 

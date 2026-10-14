@@ -72,7 +72,10 @@ const firmarDTE = async ({ jsonDte, passwordPri, tenant_id }) => {
       activo:     true,
       passwordPri, // Se envía al firmador y se descarta — en reposo vive solo cifrado
       // (configuracion.password_firma, migración 030) y se desencripta al firmar.
-      dteJson:    JSON.stringify(jsonDte),
+      // El svfe v20260316 (Bluehost) espera el DTE como OBJETO JSON embebido —
+      // no como string. Enviarlo stringificado produce el error interno del
+      // firmador 811 "Problemas al convertir String a Json".
+      dteJson:    jsonDte,
     });
 
     const data = respuesta.data;
@@ -234,16 +237,16 @@ const obtenerEstadoFirmaTenant = async ({ tenant_id, nit = null }) => {
 };
 
 /**
- * Parsea los errores del firmador para dar mensajes útiles
- * Basado en los códigos de error del manual (svfe)
+ * Parsea los errores del firmador para dar mensajes útiles.
+ * Los códigos varían entre versiones del svfe: SIEMPRE se conserva el mensaje
+ * crudo del firmador y solo se agrega contexto verificado contra respuestas
+ * reales del svfe v20260316 (Bluehost):
  *
  * 803 — no existe llave pública del NIT en el firmador
- * 809 — formato de NIT no válido
+ * 809 — la llave privada es requerida (contraseña de firma vacía)
  * 810 — certificado no encontrado
- * 811 — contraseña de certificado incorrecta
- * 812 — certificado/llave inválidos (el firmador falla al procesar el
- *       documento del NIT; suele ser un archivo corrupto en el contenedor
- *       svfe, p.ej. un binario leído como XML)
+ * 811 — el firmador no pudo procesar el documento enviado
+ * 812 — error interno de formato del firmador (revisar contenedor/hosting)
  */
 const parsearErrorFirmador = (data) => {
   if (!data?.body) return 'Error desconocido del firmador.';
@@ -254,16 +257,22 @@ const parsearErrorFirmador = (data) => {
 
   const detalle = mensajes.join(', ');
 
-  // Códigos de error comunes del firmador
+  // Códigos de error del firmador (svfe)
   const codigo = data.body.codigo;
   if (codigo === '803') {
     return `El firmador no tiene la llave pública de este NIT (${detalle}). Verifica que el certificado esté cargado en el servicio de firma.`;
   }
-  if (codigo === '809') return `Formato de NIT no válido: ${detalle}`;
-  if (codigo === '810') return 'Certificado no encontrado. Verifica que el certificado esté instalado.';
-  if (codigo === '811') return 'Contraseña de certificado incorrecta.';
+  if (codigo === '809') {
+    return `El firmador requiere la contraseña de firma (${detalle}). Guárdala en Configuración → Credenciales.`;
+  }
+  if (codigo === '810') {
+    return `Certificado no encontrado (${detalle}). Verifica que el certificado esté instalado en el servicio de firma.`;
+  }
+  if (codigo === '811') {
+    return `El firmador no pudo procesar el documento enviado (${detalle}).`;
+  }
   if (codigo === '812') {
-    return `El firmador rechazó el documento: certificado o llave del NIT inválidos (${detalle}). Revisa el contenedor svfe en el hosting y reinicia el servicio de firma.`;
+    return `El firmador rechazó el documento por un error interno (${detalle}). Revisa el contenedor svfe en el hosting y reinicia el servicio de firma.`;
   }
 
   return `El firmador devolvió un error (código ${codigo || 'desconocido'}): ${detalle}`;
