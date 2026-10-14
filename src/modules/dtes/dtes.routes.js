@@ -19,7 +19,8 @@ router.use(autenticarDual);
 
 // Middleware de scoping por establecimiento para JWT de operadores.
 // Los administradores conservan alcance tenant-wide para consultas; la
-// emisión continúa forzada al establecimiento fijo del JWT en el controller.
+// emisión resuelve el establecimiento en el controller: admin → precedencia
+// del body (selector de sucursal, Fase C3), operador → fijo del JWT.
 // Si viene con API Key, req.establecimientoId queda undefined (sin filtro).
 router.use((req, res, next) => {
   if (req.usuario?.rol !== 'administrador' && req.usuario?.establecimiento_id) {

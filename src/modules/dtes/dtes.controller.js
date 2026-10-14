@@ -32,6 +32,22 @@ const logger = require('../../utils/logger');
 const obtenerTenantAutenticado = (req) =>
   req.tenantId || req.usuario?.tenant_id || null;
 
+/**
+ * Resolución del establecimiento de emisión (Fase C3):
+ * - JWT administrador → el `establecimiento_id` del body manda (selector de
+ *   sucursal post-login); sin body, cae al del JWT.
+ * - JWT operador → siempre el del JWT (el body se ignora).
+ * - API Key (POS) → el del body (el POS es de confianza, spec §9).
+ * La pertenencia al tenant se valida aguas abajo en el generador
+ * (`obtenerConfigYEstablecimiento`).
+ */
+const resolverEstablecimientoId = (usuario, valorBody) => {
+  if (usuario?.rol === 'administrador') {
+    return valorBody || usuario?.establecimiento_id || null;
+  }
+  return usuario?.establecimiento_id || valorBody || null;
+};
+
 const manejarError = (res, err) => {
   if (err.status && err.mensaje) {
     // Incluir detalles de Hacienda si existen (códigos de error, observaciones)
@@ -63,7 +79,7 @@ const emitirFCF = async (req, res) => {
   // establecimiento_id: JWT > body > null (API Key puede enviarlo en body)
   const datos = {
     ...value,
-    establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+    establecimiento_id: resolverEstablecimientoId(req.usuario, value.establecimiento_id),
     tenant_id: obtenerTenantAutenticado(req),
   };
 
@@ -86,7 +102,7 @@ const emitirCCF = async (req, res) => {
 
   const datos = {
     ...value,
-    establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+    establecimiento_id: resolverEstablecimientoId(req.usuario, value.establecimiento_id),
     tenant_id: obtenerTenantAutenticado(req),
   };
 
@@ -111,7 +127,7 @@ const emitirNotaCredito = async (req, res) => {
     const resultado = await service.emitirNotaCredito({
       datos: {
         ...value,
-        establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+        establecimiento_id: resolverEstablecimientoId(req.usuario, value.establecimiento_id),
         tenant_id: obtenerTenantAutenticado(req),
       },
       ip: req.ip,
@@ -134,7 +150,7 @@ const emitirNotaDebito = async (req, res) => {
     const resultado = await service.emitirNotaDebito({
       datos: {
         ...value,
-        establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+        establecimiento_id: resolverEstablecimientoId(req.usuario, value.establecimiento_id),
         tenant_id: obtenerTenantAutenticado(req),
       },
       ip: req.ip,
@@ -171,7 +187,7 @@ const emitirFSE = async (req, res) => {
   const datos = {
     ...value,
     receptor,
-    establecimiento_id: req.usuario?.establecimiento_id || value.establecimiento_id || null,
+    establecimiento_id: resolverEstablecimientoId(req.usuario, value.establecimiento_id),
     tenant_id: obtenerTenantAutenticado(req),
   };
 
@@ -292,4 +308,6 @@ module.exports = {
   anularDTE,
   listarDTEs,
   obtenerDTE,
+  // Fase C3 — resolución del establecimiento de emisión (test unitario).
+  resolverEstablecimientoId,
 };
