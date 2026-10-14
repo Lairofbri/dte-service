@@ -29,6 +29,12 @@ const { routerInterno, routerApi } = require('./modules/provisioning/provisionin
 
 const app = express();
 
+// Detrás de Railway (y de Cloudflare antes de él) toda petición llega con
+// X-Forwarded-For. Sin esta configuración express-rate-limit agrupa a TODOS
+// los clientes bajo la IP interna del proxy (un solo bucket global de
+// 100 req/15 min) y registra ERR_ERL_UNEXPECTED_X_FORWARDED_FOR al arrancar.
+app.set('trust proxy', 1);
+
 // ─────────────────────────────────────────────
 // SEGURIDAD: Helmet — headers HTTP de seguridad
 // ─────────────────────────────────────────────

@@ -13,11 +13,21 @@ const generarIdEnvio = () => {
   return ultimoIdEnvio;
 };
 
+// Estados HTTP del MH que se reintentan sin activar contingencia:
+// 408 (timeout del propio MH) y 429 (límite de peticiones).
+const ESTADOS_HTTP_TRANSITORIOS = [408, 429];
+
 const esErrorTransitorio = (error) => {
   if (!error) return false;
-  if (['ECONNABORTED', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT'].includes(error.code)) return true;
+  if (
+    ['ECONNABORTED', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', 'EPIPE']
+      .includes(error.code)
+  ) return true;
   if (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout')) return true;
-  return Boolean(error.response && error.response.status >= 500);
+
+  const status = error.response?.status;
+  if (status === undefined) return false;
+  return status >= 500 || ESTADOS_HTTP_TRANSITORIOS.includes(status);
 };
 
 const respuestaHaciendaAuditable = (respuesta = {}) => ({

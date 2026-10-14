@@ -103,6 +103,28 @@ const parsearErrorHacienda = (err) => {
 };
 
 // ─────────────────────────────────────────────
+// RECHAZOS DE TRANSMISIÓN DEL MH
+// ─────────────────────────────────────────────
+
+// El MH responde 401/403 cuando el token fue revocado o regenerado en el
+// portal, aunque localmente siga "vigente". Amerita renovar y reintentar UNA vez.
+const ESTADOS_AUTH_MH = [401, 403];
+
+/**
+ * Mensaje accionable para un rechazo NO recuperable del MH.
+ * Conserva el status HTTP, el código y la descripción reales del MH — sin
+ * secretos. Nunca devuelve un genérico vacío: si el MH no informó motivo,
+ * lo dice explícitamente.
+ */
+const mensajeRechazoMH = (info = {}, accion = 'la transmisión') => {
+  const refHttp   = info.status_http ? `HTTP ${info.status_http}` : 'sin respuesta HTTP';
+  const refCodigo = info.codigo ? `, código ${info.codigo}` : '';
+  // Normaliza el punto final: la descripción del MH puede ya incluir "…."
+  const descripcion = (info.descripcion || 'motivo no informado por el MH').replace(/\.+\s*$/, '');
+  return `Hacienda rechazó ${accion} (${refHttp}${refCodigo}): ${descripcion}.`;
+};
+
+// ─────────────────────────────────────────────
 // MENSAJES DE RECHAZO DEL MH (POST /seguridad/auth)
 // Códigos observados en vivo contra apitest/api:
 //   101 → el usuario no existe / no está habilitado como usuario de aplicación
@@ -280,6 +302,9 @@ const transmitirDTE = async ({
   const { token } = await autenticar({ tenant_id });
   const ambiente = await obtenerAmbienteTenant(tenant_id);
 
+  // URL resuelta al ambiente ACTUAL del tenant (00 ↔ 01)
+  const urlRecepcion = urlParaAmbiente(URL_RECEPCION_HACIENDA, ambiente);
+
   // idEnvio: correlativo a discreción del emisor
   // Usamos timestamp para garantizar unicidad por sesión
   const idEnvio = generarIdEnvio();
@@ -294,6 +319,7 @@ const transmitirDTE = async ({
   };
 
   let intentos = 0;
+  let reauthRealizado = false;
   const maxIntentos = parseInt(MAX_REINTENTOS_HACIENDA, 10);
 
   while (intentos <= maxIntentos) {
@@ -303,17 +329,14 @@ const transmitirDTE = async ({
         codigo_generacion: codigoGeneracion,
         intento:           intentos + 1,
         ambiente,
+        url:               urlRecepcion,
       });
 
-      const respuesta = await clienteHacienda.post(
-        urlParaAmbiente(URL_RECEPCION_HACIENDA, ambiente),
-        body,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }
-      );
+      const respuesta = await clienteHacienda.post(urlRecepcion, body, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
 
       const data = respuesta.data;
 
@@ -358,6 +381,34 @@ const transmitirDTE = async ({
       // Error controlado (rechazado) — no reintentamos
       if (err.estado === 'rechazado') throw err;
 
+      const statusHttp = err?.response?.status ?? null;
+
+      // El MH rechazó el token aunque localmente estuviera "vigente" (fue
+      // revocado o regenerado en el portal). Renovar UNA vez y reintentar sin
+      // consumir la política de reintentos.
+      if (ESTADOS_AUTH_MH.includes(statusHttp) && !reauthRealizado) {
+        reauthRealizado = true;
+        logger.warn('Hacienda rechazó el token de transmisión — renovando credenciales', {
+          codigo_generacion: codigoGeneracion,
+          status_http:       statusHttp,
+        });
+
+        try {
+          await autenticar({ forzarRenovacion: true, tenant_id });
+        } catch (errAuth) {
+          if (errAuth.status && errAuth.mensaje) {
+            throw {
+              status:  422,
+              mensaje: `No se pudo re-autenticar con Hacienda: ${errAuth.mensaje}`,
+              detalles: { proveedor: 'hacienda', fase: 'autenticacion' },
+            };
+          }
+          throw errAuth;
+        }
+
+        continue;
+      }
+
       intentos++;
 
       if (intentos > maxIntentos) break;
@@ -391,9 +442,32 @@ const transmitirDTE = async ({
         continue;
       }
 
+      // Rechazo NO recuperable del MH: registrar el motivo REAL y devolverlo
+      // accionable. Nunca 502 aquí: un rechazo del MH es un 4xx de negocio y
+      // los 5xx pueden ser reemplazados por el proxy perdiendo los headers
+      // CORS (incidente 2026-10-13: la emisión devolvía 502 genérico sin log).
+      const info = parsearErrorHacienda(err);
+      logger.error('Hacienda rechazó la transmisión de forma no recuperable', {
+        codigo_generacion: codigoGeneracion,
+        tipo_dte:          tipoDte,
+        intento:           intentos,
+        status_http:       info.status_http,
+        codigo:            info.codigo,
+        descripcion:       info.descripcion,
+        observaciones:     info.observaciones,
+      });
+
       throw {
-        status: err.response?.status >= 400 ? 502 : 500,
-        mensaje: 'Hacienda devolvió un error no recuperable durante la transmisión.',
+        status:  422,
+        mensaje: mensajeRechazoMH(info),
+        detalles: {
+          proveedor:     'hacienda',
+          fase:          'transmision',
+          status_http:   info.status_http,
+          codigo:        info.codigo,
+          descripcion:   info.descripcion,
+          observaciones: info.observaciones,
+        },
       };
     }
   }
@@ -560,7 +634,20 @@ const anularDTE = async ({ documentoFirmado, version = 1, tenant_id }) => {
       throw { status: 503, mensaje: 'No se pudo conectar con Hacienda para anular el DTE.' };
     }
 
-    throw { status: 502, mensaje: 'Error al anular el DTE en Hacienda.' };
+    // Un rechazo del MH es un 4xx de negocio: conserva status/código/descripción
+    // reales en lugar de un 502 genérico que el proxy puede deformar (CORS).
+    throw {
+      status:  422,
+      mensaje: mensajeRechazoMH(errorInfo, 'la anulación'),
+      detalles: {
+        proveedor:     'hacienda',
+        fase:          'anulacion',
+        status_http:   errorInfo.status_http,
+        codigo:        errorInfo.codigo,
+        descripcion:   errorInfo.descripcion,
+        observaciones: errorInfo.observaciones,
+      },
+    };
   }
 };
 
@@ -682,6 +769,9 @@ module.exports = {
   transmitirLote,
   consultarLote,
   urlParaAmbiente,
-  // Exportado para tests unitarios: traducción de rechazos de autenticación.
+  // Exportados para tests unitarios.
   mensajeRechazo,
+  parsearErrorHacienda,
+  mensajeRechazoMH,
+  ESTADOS_AUTH_MH,
 };
