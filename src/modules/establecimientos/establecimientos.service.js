@@ -147,6 +147,28 @@ const publicarEventoVinculo = async ({ establecimiento, estadoAnterior }) => {
 };
 
 /**
+ * SELECT de lectura del recálculo fiscal. Debe incluir TODOS los campos que
+ * exige determinarEstadoFiscal (códigos MH, tipo CAT-009, dirección y
+ * departamento/municipio/distrito) y los que expone formatearEstablecimiento.
+ * Omitir distrito_cod fue la causa del incidente 2026-10-13: el
+ * establecimiento quedaba en pending_link aunque el distrito estuviera
+ * guardado. Test de regresión: tests/unit/establecimientos-fiscal.test.js.
+ */
+const SQL_SELECT_RECALCULO = `
+  SELECT id, tenant_id, branch_id, nombre, direccion, telefono,
+         cod_estable_mh, cod_punto_venta_mh,
+         cod_estable, cod_punto_venta,
+         email, correo, tipo_establecimiento,
+         departamento_cod, municipio_cod, distrito_cod,
+         activo, fiscal_status, provisioning_status, sync_error,
+         creado_en, actualizado_en,
+         (SELECT COUNT(*) FROM dtes d
+          WHERE d.establecimiento_id = establecimientos.id
+            AND d.tenant_id = establecimientos.tenant_id) AS total_dtes
+  FROM establecimientos
+  WHERE id = $1 AND tenant_id = $2`;
+
+/**
  * Recalcula y persiste el estado fiscal de un establecimiento después de
  * cualquier cambio (crear/actualizar/desactivar). Efectos:
  * - Actualiza fiscal_status, provisioning_status y sync_error.
@@ -156,18 +178,7 @@ const publicarEventoVinculo = async ({ establecimiento, estadoAnterior }) => {
  * Idempotente: repetir el mismo estado es un no-op.
  */
 const recalcularEstadoFiscal = async ({ id, tenant_id, estadoAnterior }) => {
-  const { rows } = await query(
-    `SELECT id, tenant_id, branch_id, nombre, direccion, telefono,
-            cod_estable_mh, cod_punto_venta_mh, tipo_establecimiento,
-            departamento_cod, municipio_cod, activo, fiscal_status,
-            provisioning_status,
-            (SELECT COUNT(*) FROM dtes d
-             WHERE d.establecimiento_id = establecimientos.id
-               AND d.tenant_id = establecimientos.tenant_id) AS total_dtes
-     FROM establecimientos
-     WHERE id = $1 AND tenant_id = $2`,
-    [id, tenant_id]
-  );
+  const { rows } = await query(SQL_SELECT_RECALCULO, [id, tenant_id]);
   if (rows.length === 0) {
     throw { status: 404, mensaje: 'Establecimiento no encontrado.' };
   }
@@ -590,4 +601,6 @@ module.exports = {
   desactivarEstablecimiento,
   // Exports de prueba (Fase 3): lógica pura de estados fiscales.
   determinarEstadoFiscal,
+  // Export de prueba (incidente 2026-10-13): SELECT del recálculo fiscal.
+  SQL_SELECT_RECALCULO,
 };

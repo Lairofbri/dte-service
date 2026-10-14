@@ -21,7 +21,7 @@ process.env.URL_FIRMADOR = process.env.URL_FIRMADOR || 'http://localhost:8113/fi
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { determinarEstadoFiscal } = require('../../src/modules/establecimientos/establecimientos.service');
+const { determinarEstadoFiscal, SQL_SELECT_RECALCULO } = require('../../src/modules/establecimientos/establecimientos.service');
 
 const COMPLETO = {
   activo: true,
@@ -65,6 +65,51 @@ test('cada dato faltante impide ready (pending_mh_data si está vinculado)', () 
       determinarEstadoFiscal(fila),
       'pending_mh_data',
       `campo faltante ${campo} debe impedir ready`
+    );
+  }
+});
+
+test('sin distrito pero vinculado a POS → pending_mh_data', () => {
+  assert.equal(determinarEstadoFiscal({ ...COMPLETO, distrito_cod: null }), 'pending_mh_data');
+});
+
+test('sin distrito y sin vínculo POS → pending_link', () => {
+  const { branch_id: _ignorado, distrito_cod: _sinDistrito, ...fila } = COMPLETO;
+  assert.equal(determinarEstadoFiscal(fila), 'pending_link');
+});
+
+// ─────────────────────────────────────────────
+// Regresión del incidente 2026-10-13: el SELECT de recalcularEstadoFiscal
+// debe incluir todos los campos que exige determinarEstadoFiscal; la omisión
+// de distrito_cod dejaba el establecimiento en pending_link aunque el
+// distrito estuviera guardado.
+// ─────────────────────────────────────────────
+
+test('SQL_SELECT_RECALCULO incluye todos los campos exigidos por determinarEstadoFiscal', () => {
+  const camposExigidos = [
+    'cod_estable_mh', 'cod_punto_venta_mh', 'tipo_establecimiento',
+    'direccion', 'departamento_cod', 'municipio_cod', 'distrito_cod',
+    'branch_id', 'activo',
+  ];
+  for (const campo of camposExigidos) {
+    assert.ok(
+      new RegExp(`\\b${campo}\\b`).test(SQL_SELECT_RECALCULO),
+      `el SELECT del recálculo debe incluir ${campo}`
+    );
+  }
+});
+
+test('SQL_SELECT_RECALCULO incluye los campos de lectura de formatearEstablecimiento', () => {
+  const camposLectura = [
+    'id', 'tenant_id', 'cod_estable', 'cod_punto_venta',
+    'nombre', 'telefono', 'email', 'correo',
+    'fiscal_status', 'provisioning_status', 'sync_error',
+    'creado_en', 'actualizado_en', 'total_dtes',
+  ];
+  for (const campo of camposLectura) {
+    assert.ok(
+      new RegExp(`\\b${campo}\\b`).test(SQL_SELECT_RECALCULO),
+      `el SELECT del recálculo debe incluir ${campo}`
     );
   }
 });
