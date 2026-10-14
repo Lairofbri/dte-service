@@ -4,6 +4,7 @@
 
 const { getClient }         = require('../../config/database');
 const configuracionService  = require('../configuracion/configuracion.service');
+const catalogosService      = require('../catalogos/catalogos.service');
 const logger                = require('../../utils/logger');
 const {
   TIPOS_DTE,
@@ -59,7 +60,8 @@ const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
   const { query } = require('../../config/database');
   const { rows } = await query(
     `SELECT id, nombre, cod_estable_mh, cod_estable, cod_punto_venta_mh, cod_punto_venta,
-            tipo_establecimiento, departamento_cod, municipio_cod, direccion, telefono, correo,
+            tipo_establecimiento, departamento_cod, municipio_cod, distrito_cod,
+            direccion, telefono, correo,
             branch_id, fiscal_status
      FROM establecimientos
      WHERE id = $1 AND tenant_id = $2 AND activo = true`,
@@ -71,6 +73,34 @@ const obtenerConfigYEstablecimiento = async (establecimientoId, datos = {}) => {
   }
 
   const establecimiento = rows[0];
+
+  // Ubicación fiscal completa y vigente (migración 034). El esquema oficial
+  // (FCF v2 / CCF v4) exige departamento + municipio + distrito, y el MH
+  // valida que existan en los catálogos CAT-012/CAT-013/CAT-008 (rechaza con
+  // código 096 si no). Fail-closed: se bloquea ANTES de firmar y transmitir.
+  const ubicacionFaltante = [];
+  if (!establecimiento.departamento_cod) ubicacionFaltante.push('departamento (CAT-012)');
+  if (!establecimiento.municipio_cod)    ubicacionFaltante.push('municipio (CAT-013)');
+  if (!establecimiento.distrito_cod)     ubicacionFaltante.push('distrito (CAT-008)');
+  if (ubicacionFaltante.length > 0) {
+    throw {
+      status:  409,
+      mensaje: `El establecimiento no tiene la ubicación fiscal completa (falta ${ubicacionFaltante.join(', ')}). Completala en Establecimientos antes de emitir.`,
+    };
+  }
+
+  const erroresUbicacion = await catalogosService.validarUbicacionCatalogo({
+    departamento_cod: establecimiento.departamento_cod,
+    municipio_cod:    establecimiento.municipio_cod,
+    distrito_cod:     establecimiento.distrito_cod,
+  });
+  if (erroresUbicacion.length > 0) {
+    throw {
+      status:  409,
+      mensaje: `La ubicación fiscal del establecimiento no existe en los catálogos oficiales: ${erroresUbicacion.join(' ')}`,
+    };
+  }
+
   verificarSeleccionEstablecimiento({ establecimiento, datos });
 
   return { config, establecimiento };

@@ -61,6 +61,16 @@ const crearServicioProvisioning = (dependencias = {}) => {
     return outboxActual;
   };
 
+  // Validador de ubicación CAT-012/013/008 — lazy e inyectable (unit tests).
+  let validarUbicacionActual = null;
+  const obtenerValidarUbicacion = () => {
+    if (!validarUbicacionActual) {
+      validarUbicacionActual = dependencias.validarUbicacion
+        || require('../catalogos/catalogos.service').validarUbicacionCatalogo;
+    }
+    return validarUbicacionActual;
+  };
+
   // Estado de firma por tenant (Fase 4). Inyectable para unit tests: la
   // verificación del firmador es una llamada HTTP que no corre en tests.
   // Se carga de forma perezosa para no acoplar el módulo al env del firmador.
@@ -393,6 +403,19 @@ const crearServicioProvisioning = (dependencias = {}) => {
     } = value;
     const emailNorm = emailAdmin.toLowerCase();
 
+    // Ubicación fiscal del establecimiento inicial contra los catálogos
+    // oficiales CAT-012/CAT-013/CAT-008 (migración 034). El MH valida estos
+    // códigos al emitir (rechazo 096) — se rechaza el alta con códigos
+    // fuera de catálogo.
+    const erroresUbicacion = await obtenerValidarUbicacion()({
+      departamento_cod: est.departamento_cod,
+      municipio_cod:    est.municipio_cod,
+      distrito_cod:     est.distrito_cod,
+    });
+    if (erroresUbicacion.length > 0) {
+      throw { status: 400, mensaje: erroresUbicacion.join(' ') };
+    }
+
     const db = obtenerDb();
     const client = await db.getClient();
 
@@ -482,12 +505,12 @@ const crearServicioProvisioning = (dependencias = {}) => {
         await client.query(
           `INSERT INTO establecimientos
              (id, tenant_id, nombre, direccion, telefono, email, cod_estable_mh, cod_punto_venta_mh,
-              cod_estable, cod_punto_venta, tipo_establecimiento, departamento_cod, municipio_cod,
+              cod_estable, cod_punto_venta, tipo_establecimiento, departamento_cod, municipio_cod, distrito_cod,
               fiscal_status, provisioning_status, activo)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8, $9, $10, $11, 'ready', 'confirmed', TRUE)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8, $9, $10, $11, $12, 'ready', 'confirmed', TRUE)`,
           [establecimientoId, tenantId, est.nombre, est.direccion, est.telefono || null,
            est.email || null, est.cod_estable_mh, est.cod_punto_venta_mh,
-           est.tipo_establecimiento || '02', est.departamento_cod, est.municipio_cod]
+           est.tipo_establecimiento || '02', est.departamento_cod, est.municipio_cod, est.distrito_cod]
         );
 
         // ── 4. CORRELATIVOS — secuencias por tipo DTE × ambiente (spec §10) ──

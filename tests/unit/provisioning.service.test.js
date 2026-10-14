@@ -317,6 +317,7 @@ const ESTABLECIMIENTO_INICIAL = {
   direccion: 'Av. Principal 123, San Salvador',
   departamento_cod: '06',
   municipio_cod: '01',
+  distrito_cod: '14',
   cod_estable_mh: 'M001',
   cod_punto_venta_mh: 'P001',
   tipo_establecimiento: '02',
@@ -512,6 +513,7 @@ test('crearTenantDesdePlataforma (DTE) aplica el bootstrap completo: tenant + co
     db,
     auditoria: async (entrada) => { auditoria.push(entrada); },
     outbox,
+    validarUbicacion: async () => [],
   });
 
   const resultado = await servicio.crearTenantDesdePlataforma({
@@ -577,6 +579,7 @@ test('crearTenantDesdePlataforma es idempotente: el reintento NO duplica tenant,
     db,
     auditoria: async () => {},
     outbox,
+    validarUbicacion: async () => [],
   });
 
   const datos = {
@@ -610,6 +613,7 @@ test('crearTenantDesdePlataforma sin toggle POS: crea solo el admin DTE (sin PIN
     db,
     auditoria: async () => {},
     outbox,
+    validarUbicacion: async () => [],
   });
 
   const resultado = await servicio.crearTenantDesdePlataforma({
@@ -645,6 +649,7 @@ test('crearTenantDesdePlataforma rechaza payloads inválidos (credenciales, PIN 
     db,
     auditoria: async () => {},
     outbox: { publicarEvento: async () => {} },
+    validarUbicacion: async () => [],
   });
 
   await assert.rejects(

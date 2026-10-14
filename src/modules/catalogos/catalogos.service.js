@@ -46,20 +46,92 @@ const CATALOGOS = {
   'tipo-regimen':                  'cat_033_tipo_regimen',
 };
 
+// Catálogos cuyos códigos se repiten entre departamentos: el par
+// (departamento_codigo, codigo) es la clave real (incidente 2026-10-13,
+// CAT-013/CAT-008 — ver migración 034).
+const CATALOGOS_CON_DEPARTAMENTO = ['municipio', 'distrito'];
+
 /**
- * Listar un catálogo completo (código + descripción) en el orden del Excel oficial.
- * Solo acepta slugs de la whitelist — cualquier otro slug es 404.
+ * Construye la consulta de un catálogo (función pura — testeable).
+ * - Catálogos territoriales (municipio/distrito): incluyen departamento_codigo
+ *   y aceptan filtro `departamento` (2 dígitos).
+ * - Resto de catálogos: solo código/descripción; el filtro no aplica.
+ * El nombre de tabla proviene de la whitelist CATALOGOS — nunca del cliente.
  */
-const listarCatalogo = async ({ catalogo } = {}) => {
+const construirConsultaCatalogo = (catalogo, departamento = null) => {
   const tabla = CATALOGOS[catalogo];
   if (!tabla) {
     throw { status: 404, mensaje: 'Catálogo no encontrado.' };
   }
 
-  const { rows } = await query(
-    `SELECT codigo, descripcion FROM ${tabla} ORDER BY orden`
-  );
+  const conDepartamento = CATALOGOS_CON_DEPARTAMENTO.includes(catalogo);
+
+  if (departamento && !conDepartamento) {
+    throw { status: 400, mensaje: 'Este catálogo no se filtra por departamento.' };
+  }
+  if (departamento && !/^\d{2}$/.test(String(departamento))) {
+    throw { status: 400, mensaje: 'El departamento debe ser un código de 2 dígitos (ej: 06).' };
+  }
+
+  const columnas = conDepartamento ? 'codigo, descripcion, departamento_codigo' : 'codigo, descripcion';
+  const params   = [];
+  const where    = departamento ? ' WHERE departamento_codigo = $1' : '';
+  if (departamento) params.push(String(departamento));
+
+  return { sql: `SELECT ${columnas} FROM ${tabla}${where} ORDER BY orden`, params };
+};
+
+/**
+ * Listar un catálogo completo (código + descripción) en el orden del Excel oficial.
+ * Los catálogos territoriales aceptan `departamento` para filtrar por departamento.
+ * Solo acepta slugs de la whitelist — cualquier otro slug es 404.
+ */
+const listarCatalogo = async ({ catalogo, departamento = null } = {}) => {
+  const { sql, params } = construirConsultaCatalogo(catalogo, departamento);
+  const { rows } = await query(sql, params);
   return rows;
+};
+
+/**
+ * Valida que (departamento, municipio) y (departamento, distrito) existan en los
+ * catálogos oficiales CAT-013 / CAT-008 (migración 034). Devuelve un arreglo de
+ * errores legibles — vacío cuando la ubicación es válida. Nunca lanza.
+ */
+const validarUbicacionCatalogo = async ({
+  departamento_cod = null,
+  municipio_cod = null,
+  distrito_cod = null,
+} = {}) => {
+  const errores = [];
+
+  if (municipio_cod && !departamento_cod) {
+    errores.push('Indicá el departamento para validar el municipio.');
+  }
+  if (distrito_cod && !departamento_cod) {
+    errores.push('Indicá el departamento para validar el distrito.');
+  }
+
+  if (departamento_cod && municipio_cod) {
+    const { rows } = await query(
+      'SELECT 1 FROM cat_013_municipio WHERE departamento_codigo = $1 AND codigo = $2',
+      [departamento_cod, municipio_cod]
+    );
+    if (rows.length === 0) {
+      errores.push(`El municipio ${municipio_cod} no existe en el catálogo CAT-013 para el departamento ${departamento_cod}.`);
+    }
+  }
+
+  if (departamento_cod && distrito_cod) {
+    const { rows } = await query(
+      'SELECT 1 FROM cat_008_distrito WHERE departamento_codigo = $1 AND codigo = $2',
+      [departamento_cod, distrito_cod]
+    );
+    if (rows.length === 0) {
+      errores.push(`El distrito ${distrito_cod} no existe en el catálogo CAT-008 para el departamento ${departamento_cod}.`);
+    }
+  }
+
+  return errores;
 };
 
 /**
@@ -79,6 +151,9 @@ const obtenerActividadEconomica = async ({ codigo } = {}) => {
 
 module.exports = {
   CATALOGOS,
+  CATALOGOS_CON_DEPARTAMENTO,
+  construirConsultaCatalogo,
   listarCatalogo,
+  validarUbicacionCatalogo,
   obtenerActividadEconomica,
 };

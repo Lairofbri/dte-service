@@ -88,6 +88,15 @@ const crearEstablecimientoSchema = Joi.object({
       'string.length':       'El código de municipio debe tener 2 dígitos.',
       'any.required':        'El código de municipio es requerido.',
     }),
+  distrito_cod: Joi.string()
+    .length(2)
+    .pattern(/^([0-9]{2})$/)
+    .required()
+    .messages({
+      'string.pattern.base': 'El código de distrito (CAT-008) debe ser numérico (00-99).',
+      'string.length':       'El código de distrito debe tener 2 dígitos.',
+      'any.required':        'El código de distrito (CAT-008) es requerido — lo exige el esquema oficial del MH.',
+    }),
   telefono: Joi.string().max(20).optional().allow('', null),
   email: Joi.string()
     .email({ tlds: { allow: false } })
@@ -147,6 +156,13 @@ const actualizarEstablecimientoSchema = Joi.object({
     .optional()
     .messages({
       'string.pattern.base': 'El código de municipio/distrito debe ser numérico (00-99).',
+    }),
+  distrito_cod: Joi.string()
+    .length(2)
+    .pattern(/^([0-9]{2})$/)
+    .optional()
+    .messages({
+      'string.pattern.base': 'El código de distrito (CAT-008) debe ser numérico (00-99).',
     }),
   telefono: Joi.string().max(20).optional().allow('', null),
   email:    Joi.string()

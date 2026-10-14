@@ -31,7 +31,8 @@ const COMPLETO = {
   tipo_establecimiento: '02',
   direccion: 'Av. Principal 1',
   departamento_cod: '06',
-  municipio_cod: '14',
+  municipio_cod: '23',
+  distrito_cod: '19',
 };
 
 test('datos fiscales completos + branch_id → ready', () => {
@@ -58,7 +59,7 @@ test('inactivo → inactive, incluso con datos completos', () => {
 });
 
 test('cada dato faltante impide ready (pending_mh_data si está vinculado)', () => {
-  for (const campo of ['cod_estable_mh', 'cod_punto_venta_mh', 'tipo_establecimiento', 'direccion', 'departamento_cod', 'municipio_cod']) {
+  for (const campo of ['cod_estable_mh', 'cod_punto_venta_mh', 'tipo_establecimiento', 'direccion', 'departamento_cod', 'municipio_cod', 'distrito_cod']) {
     const fila = { ...COMPLETO, [campo]: null };
     assert.equal(
       determinarEstadoFiscal(fila),

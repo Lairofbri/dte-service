@@ -4,6 +4,7 @@
 
 const { query } = require('../../config/database');
 const logger    = require('../../utils/logger');
+const catalogosService = require('../catalogos/catalogos.service');
 
 // ─────────────────────────────────────────────
 // HELPER: mapear fila BD → objeto limpio
@@ -21,6 +22,7 @@ const mapearCliente = (row) => ({
   desc_actividad:   row.desc_actividad    || null,
   departamento_cod: row.departamento_cod  || null,
   municipio_cod:    row.municipio_cod     || null,
+  distrito_cod:     row.distrito_cod      || null,
   direccion:        row.direccion         || null,
   telefono:         row.telefono          || null,
   correo:           row.correo            || null,
@@ -156,11 +158,23 @@ const crearCliente = async (datos, tenant_id) => {
     }
   }
 
+  // Ubicación CAT-013/CAT-008: si se envía dirección, los códigos deben
+  // existir en los catálogos oficiales para el departamento (migración 034).
+  // El MH rechaza el DTE (código 096) con códigos fuera de catálogo.
+  const erroresUbicacion = await catalogosService.validarUbicacionCatalogo({
+    departamento_cod: datos.departamento_cod || null,
+    municipio_cod:    datos.municipio_cod    || null,
+    distrito_cod:     datos.distrito_cod     || null,
+  });
+  if (erroresUbicacion.length > 0) {
+    throw { status: 400, mensaje: erroresUbicacion.join(' ') };
+  }
+
   const camposCli = [
     'tipo_cliente', 'nombre', 'nombre_comercial',
     'tipo_documento', 'num_documento',
     'nit', 'nrc', 'cod_actividad', 'desc_actividad',
-    'departamento_cod', 'municipio_cod', 'direccion',
+    'departamento_cod', 'municipio_cod', 'distrito_cod', 'direccion',
     'telefono', 'correo',
   ];
   const valoresCli = [
@@ -168,7 +182,7 @@ const crearCliente = async (datos, tenant_id) => {
     datos.tipo_documento || null, datos.num_documento || null,
     datos.nit || null, datos.nrc || null,
     datos.cod_actividad || null, datos.desc_actividad || null,
-    datos.departamento_cod || null, datos.municipio_cod || null,
+    datos.departamento_cod || null, datos.municipio_cod || null, datos.distrito_cod || null,
     datos.direccion || null, datos.telefono || null, datos.correo || null,
   ];
 
@@ -193,7 +207,20 @@ const crearCliente = async (datos, tenant_id) => {
 // ACTUALIZAR
 // ─────────────────────────────────────────────
 const actualizarCliente = async (id, datos, tenant_id) => {
-  await obtenerClientePorId(id, tenant_id);
+  const clientePrevio = await obtenerClientePorId(id, tenant_id);
+
+  // Ubicación: validar la combinación resultante (datos nuevos + previos)
+  // contra los catálogos oficiales CAT-013/CAT-008 (migración 034).
+  if ('departamento_cod' in datos || 'municipio_cod' in datos || 'distrito_cod' in datos) {
+    const erroresUbicacion = await catalogosService.validarUbicacionCatalogo({
+      departamento_cod: datos.departamento_cod ?? clientePrevio.departamento_cod,
+      municipio_cod:    datos.municipio_cod    ?? clientePrevio.municipio_cod,
+      distrito_cod:     datos.distrito_cod     ?? clientePrevio.distrito_cod,
+    });
+    if (erroresUbicacion.length > 0) {
+      throw { status: 400, mensaje: erroresUbicacion.join(' ') };
+    }
+  }
 
   // Verificar duplicado NIT si se está cambiando
   if (datos.nit) {
@@ -210,7 +237,7 @@ const actualizarCliente = async (id, datos, tenant_id) => {
   const campos = [
     'nombre', 'nombre_comercial', 'tipo_documento', 'num_documento',
     'nit', 'nrc', 'cod_actividad', 'desc_actividad',
-    'departamento_cod', 'municipio_cod', 'direccion',
+    'departamento_cod', 'municipio_cod', 'distrito_cod', 'direccion',
     'telefono', 'correo',
   ];
 

@@ -62,6 +62,7 @@ const receptorFCFSchema = Joi.object({
   direccion:       Joi.string().max(200).optional().allow('', null),
   departamento_cod: Joi.string().length(2).optional().allow(null),
   municipio_cod:   Joi.string().length(2).optional().allow(null),
+  distrito_cod:    Joi.string().length(2).optional().allow(null),
 });
 
 // Receptor CCF — nit/nrc con datos completos
@@ -85,6 +86,7 @@ const receptorCCFSchema = Joi.object({
   direccion:         Joi.string().max(200).optional().allow('', null),
   departamento_cod:  Joi.string().length(2).optional().allow(null),
   municipio_cod:     Joi.string().length(2).optional().allow(null),
+  distrito_cod:      Joi.string().length(2).optional().allow(null),
 });
 
 // Documento relacionado para NC/ND
@@ -173,6 +175,7 @@ const emitirFSESchema = Joi.object({
     direccion:       Joi.string().max(200).optional().allow('', null),
     departamento_cod: Joi.string().length(2).optional().allow(null),
     municipio_cod:   Joi.string().length(2).optional().allow(null),
+    distrito_cod:    Joi.string().length(2).optional().allow(null),
   }).optional(),
   sujeto_excluido: Joi.object({
     nit:              Joi.string().pattern(nitRegex).required(),
@@ -187,6 +190,7 @@ const emitirFSESchema = Joi.object({
     direccion:        Joi.string().max(200).optional().allow('', null),
     departamento_cod: Joi.string().length(2).optional().allow(null),
     municipio_cod:    Joi.string().length(2).optional().allow(null),
+    distrito_cod:     Joi.string().length(2).optional().allow(null),
   }).optional(),
   observaciones: Joi.string().max(3000).optional().allow('', null),
   ...camposPagoComunes,

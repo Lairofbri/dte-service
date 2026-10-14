@@ -165,6 +165,7 @@ const emitirFSE = async (req, res) => {
     direccion:      value.sujeto_excluido.direccion,
     departamento_cod: value.sujeto_excluido.departamento_cod,
     municipio_cod:  value.sujeto_excluido.municipio_cod,
+    distrito_cod:   value.sujeto_excluido.distrito_cod,
   } : null);
 
   const datos = {

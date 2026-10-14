@@ -13,6 +13,7 @@ const logger               = require('../../utils/logger');
 const { v5: uuidv5, v4: uuidv4 } = require('uuid');
 const { registrarEventoAuditoria } = require('../../utils/auditoria');
 const { publicarEvento }   = require('../provisioning/outbox.service');
+const catalogosService     = require('../catalogos/catalogos.service');
 
 // Namespace fijo para eventos deterministas de vínculo de sucursal (Fase 3).
 // El mismo (branch_id, estado) siempre produce el mismo operation_id, de modo
@@ -36,6 +37,7 @@ const formatearEstablecimiento = (row) => ({
   direccion:          row.direccion,
   departamento_cod:   row.departamento_cod,
   municipio_cod:      row.municipio_cod,
+  distrito_cod:       row.distrito_cod || null,
   telefono:           row.telefono    || null,
   email:              row.email       || null,
   correo:             row.correo      || null,
@@ -57,8 +59,9 @@ const formatearEstablecimiento = (row) => ({
 /**
  * Determina el estado fiscal esperado de un establecimiento (spec §5).
  * - inactive: desactivado operativamente.
- * - ready: códigos MH + tipo CAT-009 + dirección + depto/muni completos
- *   (vinculado o no a una sucursal POS, el establecimiento fiscal opera).
+ * - ready: códigos MH + tipo CAT-009 + dirección + depto/muni/distrito
+ *   completos (CAT-012/CAT-013/CAT-008 — exigidos por el esquema oficial
+ *   FCF v2/CCF v4; sin los tres la emisión es rechazada por el MH, código 096).
  * - pending_mh_data: vinculado a POS pero sin datos fiscales completos.
  * - pending_link: sin vínculo POS y sin datos fiscales.
  */
@@ -69,7 +72,8 @@ const determinarEstadoFiscal = (row) => {
     && row.tipo_establecimiento
     && row.direccion
     && row.departamento_cod
-    && row.municipio_cod;
+    && row.municipio_cod
+    && row.distrito_cod;
   if (!datosCompletos) {
     return row.branch_id ? 'pending_mh_data' : 'pending_link';
   }
@@ -233,6 +237,7 @@ const { rows } = await query(
        e.direccion,
        e.departamento_cod,
        e.municipio_cod,
+       e.distrito_cod,
        e.telefono,
        e.email,
        e.correo,
@@ -276,6 +281,7 @@ const queryText = `SELECT
        e.direccion,
        e.departamento_cod,
        e.municipio_cod,
+       e.distrito_cod,
        e.telefono,
        e.email,
        e.correo,
@@ -316,9 +322,19 @@ const {
     cod_estable_mh, cod_punto_venta_mh,
     cod_estable, cod_punto_venta,
     nombre, direccion,
-    departamento_cod, municipio_cod,
+    departamento_cod, municipio_cod, distrito_cod,
     telefono, email, correo, tipo_establecimiento,
   } = datos;
+
+  // La ubicación debe existir en los catálogos oficiales vigentes
+  // (CAT-012/CAT-013/CAT-008 — migración 034). Un código fuera de catálogo
+  // hace que el MH rechace el DTE (código 096, normativa de cumplimiento).
+  const erroresUbicacion = await catalogosService.validarUbicacionCatalogo({
+    departamento_cod, municipio_cod, distrito_cod,
+  });
+  if (erroresUbicacion.length > 0) {
+    throw { status: 400, mensaje: erroresUbicacion.join(' ') };
+  }
 
   // Verificar que la combinación cod_estable_mh + cod_punto_venta_mh
   // no existe YA dentro del mismo tenant. Fase 2: duplicidad tenant-scoped.
@@ -345,14 +361,14 @@ const {
       'cod_estable_mh', 'cod_punto_venta_mh',
       'cod_estable', 'cod_punto_venta',
       'nombre', 'direccion',
-      'departamento_cod', 'municipio_cod',
+      'departamento_cod', 'municipio_cod', 'distrito_cod',
       'telefono', 'email', 'correo', 'tipo_establecimiento',
       'tenant_id', 'branch_id',
     ];
     const valoresEst = [
       cod_estable_mh, cod_punto_venta_mh,
       cod_estable || cod_estable_mh, cod_punto_venta || cod_punto_venta_mh,
-      nombre, direccion, departamento_cod, municipio_cod,
+      nombre, direccion, departamento_cod, municipio_cod, distrito_cod,
       telefono || null, email || null, correo || email || null,
       tipo_establecimiento || '02',
       tenant_id, branchId,
@@ -366,7 +382,7 @@ const {
          id, branch_id, cod_estable_mh, cod_punto_venta_mh,
          cod_estable, cod_punto_venta,
          nombre, direccion,
-         departamento_cod, municipio_cod,
+         departamento_cod, municipio_cod, distrito_cod,
          telefono, email, correo, tipo_establecimiento,
          activo, creado_en, actualizado_en`,
       valoresEst
@@ -412,6 +428,20 @@ const {
 const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
   const establecimientoPrevio = await obtenerEstablecimiento({ id, tenant_id });
 
+  // Ubicación fiscal: si se toca departamento, municipio o distrito, el
+  // resultado (datos nuevos + previos) debe existir en los catálogos oficiales
+  // CAT-012/CAT-013/CAT-008 (migración 034). Fuera de catálogo → 096 del MH.
+  if (datos.departamento_cod !== undefined || datos.municipio_cod !== undefined || datos.distrito_cod !== undefined) {
+    const erroresUbicacion = await catalogosService.validarUbicacionCatalogo({
+      departamento_cod: datos.departamento_cod ?? establecimientoPrevio.departamento_cod,
+      municipio_cod:    datos.municipio_cod    ?? establecimientoPrevio.municipio_cod,
+      distrito_cod:     datos.distrito_cod     ?? establecimientoPrevio.distrito_cod,
+    });
+    if (erroresUbicacion.length > 0) {
+      throw { status: 400, mensaje: erroresUbicacion.join(' ') };
+    }
+  }
+
   // Los códigos MH forman parte del número de control y no pueden cambiar
   // después de emitir el primer DTE del establecimiento.
   if (datos.cod_estable_mh || datos.cod_punto_venta_mh) {
@@ -449,7 +479,7 @@ const actualizarEstablecimiento = async ({ id, datos, tenant_id }) => {
     'cod_estable_mh', 'cod_punto_venta_mh',
     'cod_estable', 'cod_punto_venta',
     'nombre', 'direccion',
-    'departamento_cod', 'municipio_cod',
+    'departamento_cod', 'municipio_cod', 'distrito_cod',
     'telefono', 'email', 'correo', 'tipo_establecimiento',
     'activo', // permite activar y desactivar desde PATCH
   ];
@@ -482,7 +512,7 @@ await query(
        id, branch_id, cod_estable_mh, cod_punto_venta_mh,
        cod_estable, cod_punto_venta,
        nombre, direccion,
-       departamento_cod, municipio_cod,
+       departamento_cod, municipio_cod, distrito_cod,
        telefono, email, correo, tipo_establecimiento,
        activo, creado_en, actualizado_en`,
     valores

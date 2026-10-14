@@ -31,7 +31,8 @@ const manejarError = (res, err) => {
 const listarCatalogo = async (req, res) => {
   try {
     const filas = await service.listarCatalogo({
-      catalogo: req.params.catalogo,
+      catalogo:     req.params.catalogo,
+      departamento: req.query.departamento || null,
     });
     return exito(res, filas);
   } catch (err) {

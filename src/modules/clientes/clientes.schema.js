@@ -25,6 +25,9 @@ const camposComunes = {
   municipio_cod:    Joi.string().length(2).pattern(/^[0-9]{2}$/)
     .optional().allow(null)
     .messages({ 'string.pattern.base': 'El código de municipio debe ser numérico (00-99).' }),
+  distrito_cod:     Joi.string().length(2).pattern(/^[0-9]{2}$/)
+    .optional().allow(null)
+    .messages({ 'string.pattern.base': 'El código de distrito (CAT-008) debe ser numérico (00-99).' }),
   direccion:        Joi.string().max(250).optional().allow('', null),
 };
 
@@ -84,6 +87,7 @@ const actualizarClienteSchema = Joi.object({
   correo:          Joi.string().pattern(correoRegex).max(150).optional().allow('', null),
   departamento_cod: Joi.string().length(2).optional().allow(null),
   municipio_cod:   Joi.string().length(2).pattern(/^[0-9]{2}$/).optional().allow(null),
+  distrito_cod:    Joi.string().length(2).pattern(/^[0-9]{2}$/).optional().allow(null),
   direccion:       Joi.string().max(250).optional().allow('', null),
 });
 

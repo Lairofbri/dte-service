@@ -228,10 +228,13 @@ const construirEmisor = (config, establecimiento) => ({
   codActividad:     config.codigo_actividad,
   descActividad:    config.desc_actividad,
   nombreComercial:  config.nombre_comercial  || null,
+  // Ubicación fiscal CAT-012/CAT-013/CAT-008 — validada en
+  // obtenerConfigYEstablecimiento (fail-closed). SIN valores inventados:
+  // un respaldo con código equivocado provoca el rechazo 096 del MH.
   direccion: {
-    departamento: establecimiento.departamento_cod || '06',
-    municipio:    establecimiento.municipio_cod    || '20',
-    distrito:     establecimiento.distrito_cod      || establecimiento.municipio_cod || '20',
+    departamento: establecimiento.departamento_cod,
+    municipio:    establecimiento.municipio_cod,
+    distrito:     establecimiento.distrito_cod,
     complemento:  establecimiento.direccion        || config.direccion,
   },
   telefono:      formatearTelefono(establecimiento.telefono || config.telefono) || '00000000',
@@ -268,6 +271,9 @@ const construirReceptorFCF = (receptor) => ({
   direccion:     receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
+    // FCF v2 exige distrito (CAT-008) igual que CCF/NC/ND. Fallback legacy
+    // mientras el POS no capture distrito (pendiente: alinear catálogos POS).
+    distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
     complemento:  receptor.direccion    || '',
   } : null,
   telefono:      receptor.telefono || null,

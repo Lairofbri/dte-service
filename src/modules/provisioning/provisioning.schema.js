@@ -96,6 +96,14 @@ const establecimientoInicialSchema = Joi.object({
       'string.pattern.base': 'El código de municipio debe ser numérico (00-99).',
       'any.required':        'El municipio es requerido.',
     }),
+  distrito_cod: Joi.string()
+    .length(2)
+    .pattern(/^[0-9]{2}$/)
+    .required()
+    .messages({
+      'string.pattern.base': 'El código de distrito (CAT-008) debe ser numérico (00-99).',
+      'any.required':        'El distrito (CAT-008) es requerido — lo exige el esquema oficial del MH.',
+    }),
   // Códigos del documento de acreditamiento de Hacienda.
   cod_estable_mh: Joi.string()
     .trim()
