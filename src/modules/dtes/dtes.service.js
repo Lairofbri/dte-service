@@ -710,7 +710,11 @@ const listarDTEs = async ({ filtros = {}, establecimientoId, tenant_id }) => {
   );
 
   return {
-    dtes: rows,
+    dtes: rows.map((fila) => ({
+      ...fila,
+      // YYYY-MM-DD — evita el corrimiento de día en el navegador (UTC-6).
+      fecha_emision: formatearFechaEmi(fila.fecha_emision),
+    })),
     paginacion: {
       total:   parseInt(conteo[0].total),
       pagina,
@@ -759,7 +763,12 @@ const obtenerDTE = async ({ codigoGeneracion, establecimientoId, tenant_id }) =>
     throw { status: 404, mensaje: 'DTE no encontrado.' };
   }
 
-  const dte = rows[0];
+  const dte = {
+    ...rows[0],
+    // YYYY-MM-DD — el enlace de consulta y la UI no deben reinterpretar la
+    // fecha como timestamp UTC (mostraba/consultaba el día anterior).
+    fecha_emision: formatearFechaEmi(rows[0].fecha_emision),
+  };
 
   return {
     ...dte,
@@ -770,10 +779,32 @@ const obtenerDTE = async ({ codigoGeneracion, establecimientoId, tenant_id }) =>
 };
 
 // ─────────────────────────────────────────────
+// HELPER: fecha de emisión como YYYY-MM-DD
+// Las columnas DATE llegan del driver como Date (medianoche local del
+// servidor). Serializarlas como timestamp completo hacía que el navegador
+// (UTC-6) mostrara el día anterior y que el enlace de consulta del MH
+// quedara malformado (fechaEmi con hora ISO / toString de Date).
+// Se normaliza SIEMPRE a YYYY-MM-DD (formato oficial del QR, Anexos MH).
+// ─────────────────────────────────────────────
+const formatearFechaEmi = (fecha) => {
+  if (!fecha) return '';
+  if (fecha instanceof Date) {
+    // Partes locales del Date: el driver lo construyó como medianoche local
+    // con la fecha real de la columna → los getters devuelven esa fecha.
+    const y = fecha.getFullYear();
+    const m = String(fecha.getMonth() + 1).padStart(2, '0');
+    const d = String(fecha.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(fecha).slice(0, 10);
+};
+
+// ─────────────────────────────────────────────
 // HELPER: construir URL del QR de Hacienda
+// Formato oficial: ?ambiente={00|01}&codGen={UUID}&fechaEmi={YYYY-MM-DD}
 // ─────────────────────────────────────────────
 const construirQRUrl = (ambiente, codigoGeneracion, fechaEmision) =>
-  `https://admin.factura.gob.sv/consultaPublica?ambiente=${ambiente}&codGen=${codigoGeneracion}&fechaEmi=${fechaEmision}`;
+  `https://admin.factura.gob.sv/consultaPublica?ambiente=${ambiente}&codGen=${codigoGeneracion}&fechaEmi=${formatearFechaEmi(fechaEmision)}`;
 
 module.exports = {
   emitirFCF,
@@ -784,4 +815,6 @@ module.exports = {
   anularDTE,
   listarDTEs,
   obtenerDTE,
+  construirQRUrl,
+  formatearFechaEmi,
 };
