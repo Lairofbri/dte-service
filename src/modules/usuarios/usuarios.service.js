@@ -361,6 +361,16 @@ const actualizarUsuario = async ({ id, datos, tenant_id }) => {
       valores
     );
 
+    // SEGURIDAD: al cambiar la contraseña se revocan TODAS las sesiones del
+    // usuario (refresh tokens). Un token robado no sobrevive al cambio de
+    // credenciales — la siguiente recarga pedirá iniciar sesión de nuevo.
+    if (datos.password) {
+      await client.query(
+        'UPDATE refresh_tokens SET activo = FALSE WHERE usuario_id = $1',
+        [id]
+      );
+    }
+
     await client.query('COMMIT');
 
     logger.info('Usuario actualizado', {

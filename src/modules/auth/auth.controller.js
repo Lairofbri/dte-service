@@ -11,6 +11,7 @@
 
 const service = require('./auth.service');
 const { loginSchema } = require('./auth.schema');
+const { JWT_REFRESH_EXPIRA_EN } = require('../../config/env');
 const {
   exito,
   error,
@@ -23,11 +24,15 @@ const { esUuidValido } = require('../../middlewares/uuid.middleware');
 // CONSTANTES DE LA COOKIE
 // ─────────────────────────────────────────────
 const COOKIE_NOMBRE  = 'refresh_token';
+// El maxAge de la cookie debe coincidir con la vigencia del refresh token en
+// BD (env JWT_REFRESH_EXPIRA_EN, en días). Antes estaba fijo en 7 días —
+// cambiar la env no ajustaba la cookie.
+const DIAS_REFRESH   = parseInt(JWT_REFRESH_EXPIRA_EN, 10) || 7;
 const COOKIE_OPCIONES = {
   httpOnly: true,    // JavaScript no puede leerla — inmune a XSS
   secure:   process.env.NODE_ENV === 'production', // HTTPS solo en producción
   sameSite: 'strict', // Solo se envía en requests del mismo origen
-  maxAge:   7 * 24 * 60 * 60 * 1000, // 7 días en milisegundos
+  maxAge:   DIAS_REFRESH * 24 * 60 * 60 * 1000, // vigencia del refresh token en BD
   path:     '/api/auth', // Solo se envía a rutas de auth
 };
 
