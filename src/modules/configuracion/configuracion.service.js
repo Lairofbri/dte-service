@@ -11,6 +11,7 @@
 const { query, getClient } = require('../../config/database');
 const { encriptar, desencriptar } = require('../../config/crypto');
 const { obtenerActividadEconomica } = require('../catalogos/catalogos.service');
+const { registrarEventoAuditoria } = require('../../utils/auditoria');
 const logger = require('../../utils/logger');
 
 // ─────────────────────────────────────────────
@@ -312,6 +313,102 @@ const debeInvalidarToken = ({ datos, ambienteActual }) =>
     (datos.ambiente !== undefined && datos.ambiente !== ambienteActual)
   );
 
+// ─────────────────────────────────────────────
+// ACTIVACIÓN AUTOMÁTICA DEL TENANT (Fase C2)
+// ─────────────────────────────────────────────
+
+/**
+ * Evalúa la transición automática del estado de provisión (Fase C2).
+ *
+ * Decisión del propietario (2026-10-13): el tenant pasa a `active` cuando su
+ * configuración fiscal queda completa — credenciales de Hacienda (usuario +
+ * contraseña) y contraseña de firma (passwordPri) cargadas. La transición
+ * SOLO parte de `pending_fiscal_setup`: nunca pisa `blocked`/`failed` ni
+ * hace downgrade.
+ *
+ * Se evalúan las señales locales que controla el administrador (credenciales
+ * almacenadas, cifradas). La salud del firmador externo se reporta aparte
+ * (`GET /api/configuracion/estado-firma`) y NO bloquea la activación.
+ *
+ * @param {object} entrada
+ * @param {string} entrada.provisioning_status — estado actual del tenant
+ * @param {object|null} entrada.configuracion — fila con las credenciales (o null)
+ * @returns {'active'|null} estado destino, o null si no corresponde transición
+ */
+const determinarTransicionPorConfiguracion = ({ provisioning_status, configuracion }) => {
+  if (provisioning_status !== 'pending_fiscal_setup') return null;
+
+  const configuracionCompleta = Boolean(
+    configuracion &&
+    configuracion.usuario_hacienda &&
+    configuracion.password_hacienda &&
+    configuracion.password_firma
+  );
+
+  return configuracionCompleta ? 'active' : null;
+};
+
+/**
+ * Aplica la activación automática si corresponde: evalúa configuración +
+ * estado, actualiza el tenant y audita. Es un efecto secundario del guardado
+ * de configuración — NUNCA bloquea ni rompe la operación principal.
+ *
+ * El UPDATE lleva el predicado `provisioning_status = 'pending_fiscal_setup'`
+ * (guarda contra carreras: p. ej. el POS marcando `blocked` a la vez).
+ *
+ * @returns {Promise<'active'|null>} estado aplicado, o null si no hubo cambio
+ */
+const sincronizarProvisioningActivo = async ({ tenant_id, origen }) => {
+  try {
+    const { rows } = await query(
+      `SELECT t.provisioning_status,
+              c.usuario_hacienda, c.password_hacienda, c.password_firma
+         FROM tenants t
+         LEFT JOIN configuracion c ON c.tenant_id = t.id
+        WHERE t.id = $1`,
+      [tenant_id]
+    );
+    if (rows.length === 0) return null;
+
+    const nuevoEstado = determinarTransicionPorConfiguracion({
+      provisioning_status: rows[0].provisioning_status,
+      configuracion: rows[0],
+    });
+    if (!nuevoEstado) return null;
+
+    const { rows: activados } = await query(
+      `UPDATE tenants
+          SET provisioning_status = $1, actualizado_en = NOW()
+        WHERE id = $2 AND provisioning_status = 'pending_fiscal_setup'
+        RETURNING id`,
+      [nuevoEstado, tenant_id]
+    );
+    if (activados.length === 0) return null;
+
+    await registrarEventoAuditoria({
+      tenant_id,
+      evento: 'PROVISION_TENANT_ACTIVADO',
+      detalles: { origen, estado_nuevo: nuevoEstado },
+    });
+
+    logger.info('Tenant activado automáticamente (configuración fiscal completa)', {
+      tenant_id,
+      origen,
+    });
+
+    return nuevoEstado;
+  } catch (err) {
+    // Efecto secundario: un fallo acá queda en logs; el guardado principal
+    // de la configuración se responde igual.
+    logger.error('No se pudo evaluar la activación automática del tenant', {
+      tenant_id,
+      origen,
+      error: err.message,
+    });
+    return null;
+  }
+};
+
 /**
  * Actualizar la configuración existente
  * Solo actualiza los campos enviados (PATCH semántico)
@@ -411,6 +508,12 @@ const actualizarConfiguracion = async ({ datos, tenant_id }) => {
     credenciales_actualizadas: !!(datos.usuario_hacienda || datos.password_hacienda),
   });
 
+  // Fase C2: si con este guardado la configuración fiscal quedó completa
+  // (credenciales + firma), el tenant pasa a `active` automáticamente.
+  if (datos.usuario_hacienda || datos.password_hacienda) {
+    await sincronizarProvisioningActivo({ tenant_id, origen: 'configuracion_credenciales' });
+  }
+
   return formatearParaRespuesta(rows[0]);
 };
 
@@ -440,6 +543,12 @@ const guardarPasswordFirma = async ({ password_firma, tenant_id }) => {
   logger.info('Contraseña de firma ' + (valor ? 'guardada' : 'eliminada'), {
     // NUNCA loguear la contraseña ni su valor cifrado
   });
+
+  // Fase C2: con la contraseña de firma cargada la configuración fiscal puede
+  // quedar completa → el tenant pasa a `active` automáticamente.
+  if (valor) {
+    await sincronizarProvisioningActivo({ tenant_id, origen: 'configuracion_password_firma' });
+  }
 
   return { password_firma_configurada: !!valor };
 };
@@ -543,6 +652,9 @@ module.exports = {
   // Exportado para tests unitarios: invalidación del token de Hacienda
   // por credenciales o cambio de ambiente.
   debeInvalidarToken,
+  // Exportados para tests unitarios: activación automática del tenant (C2).
+  determinarTransicionPorConfiguracion,
+  sincronizarProvisioningActivo,
   // Exportado para tests unitarios de seguridad (redacción). No altera la API.
   formatearParaRespuesta,
 };
