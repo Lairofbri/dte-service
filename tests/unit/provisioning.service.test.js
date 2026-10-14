@@ -15,6 +15,11 @@ const TENANT2 = 'a1000000-0000-4000-8000-000000000002';
 const OP = 'b1000000-0000-4000-8000-000000000001';
 const OP2 = 'b1000000-0000-4000-8000-000000000002';
 
+// branch_id del bootstrap es uuid v4 (crypto.randomUUID); los operation_id
+// derivados de eventos secundarios son uuid v5 (uuidv5 determinista).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // ─────────────────────────────────────────────
 // DB fake con almacenamiento en memoria
 // ─────────────────────────────────────────────
@@ -75,20 +80,22 @@ const crearDbFake = () => {
       return { rows: [] };
     }
 
-    // Establecimiento del bootstrap (con códigos MH, sin branch_id).
+    // Establecimiento del bootstrap (con branch_id y códigos MH).
     if (sql.startsWith('INSERT INTO establecimientos') && sql.includes('cod_estable_mh')) {
       const fila = {
         id: params[0],
         tenant_id: params[1],
-        nombre: params[2],
-        direccion: params[3],
-        telefono: params[4],
-        email: params[5],
-        cod_estable_mh: params[6],
-        cod_punto_venta_mh: params[7],
-        tipo_establecimiento: params[8],
-        departamento_cod: params[9],
-        municipio_cod: params[10],
+        branch_id: params[2],
+        nombre: params[3],
+        direccion: params[4],
+        telefono: params[5],
+        email: params[6],
+        cod_estable_mh: params[7],
+        cod_punto_venta_mh: params[8],
+        tipo_establecimiento: params[9],
+        departamento_cod: params[10],
+        municipio_cod: params[11],
+        distrito_cod: params[12],
         fiscal_status: 'ready',
         provisioning_status: 'confirmed',
         activo: true,
@@ -547,17 +554,47 @@ test('crearTenantDesdePlataforma (DTE) aplica el bootstrap completo: tenant + co
   assert.ok(adminDte, 'el usuario administrador existe en el tenant DTE');
   assert.equal(adminDte.rol, 'administrador');
   assert.ok(adminDte.establecimiento_id, 'el admin queda asignado al establecimiento');
-  assert.ok(db.obtenerEstablecimientoPorId(adminDte.establecimiento_id), 'el establecimiento asignado existe');
+  const establecimiento = db.obtenerEstablecimientoPorId(adminDte.establecimiento_id);
+  assert.ok(establecimiento, 'el establecimiento asignado existe');
+  assert.match(establecimiento.branch_id, UUID_V4, 'el establecimiento inicial nace con branch_id (spec §6.4)');
   assert.match(adminDte.password_hash, /^\$2[aby]\$\d{2}\$/, 'password_hash es bcrypt');
   assert.equal(db.contarUsuarios(), 1);
 
-  // Dos eventos: TENANT_CREADO (proyección) + USUARIO_INICIAL (credenciales).
+  // Tres eventos: TENANT_CREADO (proyección) + BRANCH_VINCULADO (sucursal
+  // inicial, toggle POS activo) + USUARIO_INICIAL (credenciales).
   const eventos = outbox.eventos();
-  assert.equal(eventos.length, 2);
+  assert.equal(eventos.length, 3);
   const tenantEvento = eventos.find((e) => e.tipo_evento === 'TENANT_CREADO');
+  const branchEvento = eventos.find((e) => e.tipo_evento === 'BRANCH_VINCULADO');
   const usuarioEvento = eventos.find((e) => e.tipo_evento === 'USUARIO_INICIAL');
   assert.ok(tenantEvento, 'evento TENANT_CREADO publicado');
+  assert.ok(branchEvento, 'evento BRANCH_VINCULADO publicado (toggle POS activo)');
   assert.ok(usuarioEvento, 'evento USUARIO_INICIAL publicado');
+
+  // Contrato estricto del receptor POS (Joi allowUnknown=false): el payload
+  // del TENANT_CREADO solo lleva claves definidas — la sucursal viaja por
+  // BRANCH_VINCULADO. Regresión del 400 del 2026-10-10 (clave establecimiento).
+  assert.deepEqual(
+    Object.keys(tenantEvento.payload).sort(),
+    ['nit', 'nombre', 'nombre_comercial', 'nrc'],
+    'TENANT_CREADO solo con las claves del schema POS'
+  );
+
+  // BRANCH_VINCULADO: branch_id compartido y establecimiento inicial ready.
+  assert.equal(branchEvento.branch_id, establecimiento.branch_id);
+  assert.equal(branchEvento.payload.branch_id, establecimiento.branch_id);
+  assert.equal(branchEvento.payload.establecimiento_id, establecimiento.id);
+  assert.equal(branchEvento.payload.fiscal_status, 'ready');
+  assert.equal(branchEvento.payload.nombre, 'Casa Matriz');
+
+  // El POS deduplica por (tenant_id, operation_id): cada tipo de evento del
+  // alta lleva su propio operation_id. Regresión de la colisión por la que el
+  // POS descartaba el 2.º evento (mismo id que TENANT_CREADO).
+  assert.equal(new Set(eventos.map((e) => e.operation_id)).size, 3, 'operation_id único por tipo de evento');
+  assert.equal(tenantEvento.operation_id, OP2, 'TENANT_CREADO conserva el operation_id canónico del alta');
+  assert.match(branchEvento.operation_id, UUID_RE, 'BRANCH_VINCULADO con operation_id derivado (uuid v5)');
+  assert.match(usuarioEvento.operation_id, UUID_RE, 'USUARIO_INICIAL con operation_id derivado (uuid v5)');
+
   assert.equal(usuarioEvento.tenant_id, TENANT2);
   assert.equal(usuarioEvento.payload.email, 'admin@demo.sv');
   assert.equal(usuarioEvento.payload.rol, 'administrador');
@@ -603,7 +640,7 @@ test('crearTenantDesdePlataforma es idempotente: el reintento NO duplica tenant,
   assert.equal(db.contarConfiguraciones(), 1, 'no duplica la configuración');
   assert.equal(db.conteoEstablecimientos(), 1, 'no duplica el establecimiento');
   assert.equal(db.contarCorrelativos(), 22, 'no duplica los correlativos');
-  assert.equal(outbox.eventos().length, 2, 'no duplica los eventos de provisión');
+  assert.equal(outbox.eventos().length, 3, 'no duplica los eventos de provisión');
 });
 
 test('crearTenantDesdePlataforma sin toggle POS: crea solo el admin DTE (sin PIN, sin USUARIO_INICIAL)', async () => {
@@ -637,9 +674,17 @@ test('crearTenantDesdePlataforma sin toggle POS: crea solo el admin DTE (sin PIN
   assert.ok(admin.establecimiento_id, 'el admin queda asignado aunque no haya POS');
   assert.equal(db.contarConfiguraciones(), 1, 'la configuración se crea aunque no haya POS');
 
+  // El branch_id se asigna SIEMPRE (spec §6.4); el evento es el que se gatea.
+  const establecimiento = db.obtenerEstablecimientoPorId(admin.establecimiento_id);
+  assert.match(establecimiento.branch_id, UUID_V4, 'branch_id presente aunque la empresa no use POS');
+
   const eventos = outbox.eventos();
-  assert.equal(eventos.length, 1, 'solo TENANT_CREADO — sin usuario POS');
+  assert.equal(eventos.length, 1, 'solo TENANT_CREADO — sin sucursal ni usuario POS');
   assert.equal(eventos[0].tipo_evento, 'TENANT_CREADO');
+  assert.ok(
+    !eventos.some((e) => e.tipo_evento === 'BRANCH_VINCULADO'),
+    'sin toggle POS no se publica BRANCH_VINCULADO (spec §6.4)'
+  );
   assert.ok(!JSON.stringify(eventos).includes('hash'), 'sin hashes ni credenciales POS');
 });
 

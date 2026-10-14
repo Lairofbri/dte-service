@@ -15,6 +15,7 @@
 // tests puedan inyectar un fake sin variable DATABASE_URL en el entorno.
 
 const crypto = require('crypto');
+const { v5: uuidv5 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const logger = require('../../utils/logger');
 const { registrarEventoAuditoria } = require('../../utils/auditoria');
@@ -34,6 +35,15 @@ const BCRYPT_ROUNDS = 12;
 // establecimientos.service.js (spec §10 — secuencias por establecimiento).
 const TIPOS_DTE_CORRELATIVOS = ['01', '03', '04', '05', '06', '07', '08', '09', '11', '14', '15'];
 const AMBIENTES_CORRELATIVOS = ['00', '01'];
+
+// Namespace determinista de los eventos secundarios del alta (C1, 2026-10-13).
+// El POS deduplica los eventos por (tenant_id, operation_id): BRANCH_VINCULADO
+// y USUARIO_INICIAL NO pueden reutilizar el operation_id de la operación
+// canónica (el mismo de TENANT_CREADO) o el POS descarta el evento por
+// "duplicado". uuid v5 mantiene el id estable ante reintentos.
+const NAMESPACE_EVENTO_ALTA = '3a7f0c2e-6b1d-4f8a-9c5e-2d4b8a1f6e30';
+const operationIdEventoAlta = (tipoEvento, clave) =>
+  uuidv5(`${tipoEvento}:${clave}`, NAMESPACE_EVENTO_ALTA);
 
 /**
  * Genera una API Key técnica de integración POS ↔ DTE.
@@ -374,14 +384,16 @@ const crearServicioProvisioning = (dependencias = {}) => {
    * Bootstrap COMPLETO en una sola transacción (2026-10-10):
    *  1. tenants                    — identidad fiscal (pending_fiscal_setup)
    *  2. configuracion              — datos del emisor (sin credenciales aún)
-   *  3. establecimientos           — establecimiento fiscal inicial (ready)
+   *  3. establecimientos           — establecimiento fiscal inicial (ready,
+   *                                  con branch_id compartido — spec §6.4)
    *  4. correlativos               — secuencias por tipo DTE × ambiente
    *  5. usuarios                   — administrador inicial ASIGNADO al
    *                                  establecimiento (nunca con NULL)
    * Tras el COMMIT se publican los eventos de provisión (outbox idempotente).
    * El usuario equivalente en POS (mismo admin + PIN) solo se crea si
-   * crear_usuario_pos=true (toggle de la UI). Los reintentos (mismo
-   * operation_id) NO duplican nada.
+   * crear_usuario_pos=true (toggle de la UI); la sucursal inicial
+   * (BRANCH_VINCULADO) también se sincroniza SOLO con el toggle activo.
+   * Los reintentos (mismo operation_id) NO duplican nada.
    */
   const crearTenantDesdePlataforma = async ({ datos, operationId, usuario = null, ip = null }) => {
     const { error: validacionError, value } = crearTenantPlataformaSchema.validate(datos);
@@ -421,6 +433,10 @@ const crearServicioProvisioning = (dependencias = {}) => {
 
     let tenantRow = null;
     let duplicado = false;
+    // Ids del establecimiento inicial del bootstrap: declarados fuera del
+    // try porque los eventos post-COMMIT (BRANCH_VINCULADO) los referencian.
+    let establecimientoId = null;
+    let branchId = null;
 
     try {
       await client.query('BEGIN');
@@ -501,14 +517,17 @@ const crearServicioProvisioning = (dependencias = {}) => {
         );
 
         // ── 3. ESTABLECIMIENTO fiscal inicial (ready → puede emitir) ──
-        const establecimientoId = crypto.randomUUID();
+        // Nace con branch_id compartido (spec §6.4): el POS proyecta la
+        // sucursal con este identificador cuando el toggle POS está activo.
+        establecimientoId = crypto.randomUUID();
+        branchId = crypto.randomUUID();
         await client.query(
           `INSERT INTO establecimientos
-             (id, tenant_id, nombre, direccion, telefono, email, cod_estable_mh, cod_punto_venta_mh,
+             (id, tenant_id, branch_id, nombre, direccion, telefono, email, cod_estable_mh, cod_punto_venta_mh,
               cod_estable, cod_punto_venta, tipo_establecimiento, departamento_cod, municipio_cod, distrito_cod,
               fiscal_status, provisioning_status, activo)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8, $9, $10, $11, $12, 'ready', 'confirmed', TRUE)`,
-          [establecimientoId, tenantId, est.nombre, est.direccion, est.telefono || null,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9, $10, $11, $12, $13, 'ready', 'confirmed', TRUE)`,
+          [establecimientoId, tenantId, branchId, est.nombre, est.direccion, est.telefono || null,
            est.email || null, est.cod_estable_mh, est.cod_punto_venta_mh,
            est.tipo_establecimiento || '02', est.departamento_cod, est.municipio_cod, est.distrito_cod]
         );
@@ -562,6 +581,9 @@ const crearServicioProvisioning = (dependencias = {}) => {
     }
 
     // Eventos de provisión (FUERA de la transacción — outbox idempotente).
+    // Contrato estricto del receptor POS (Joi allowUnknown=false): el payload
+    // solo lleva claves definidas — la sucursal inicial viaja por
+    // BRANCH_VINCULADO (regresión del 400 del 2026-10-10, C1).
     await obtenerOutbox().publicarEvento({
       operation_id: operationIdNorm,
       tenant_id: tenantId,
@@ -571,12 +593,6 @@ const crearServicioProvisioning = (dependencias = {}) => {
         nombre_comercial: tenant.nombre_comercial || null,
         nit: tenant.nit,
         nrc: tenant.nrc || null,
-        establecimiento: {
-          id: null, // el establecimiento es del tenant DTE; POS lo crea por vínculo
-          nombre: est.nombre,
-          cod_estable_mh: est.cod_estable_mh,
-          cod_punto_venta_mh: est.cod_punto_venta_mh,
-        },
       },
     });
 
@@ -592,8 +608,53 @@ const crearServicioProvisioning = (dependencias = {}) => {
     // Usuario POS (opcional — toggle "esta empresa usará POS"): SOLO hashes
     // bcrypt (password y PIN), nunca texto plano (spec §3.3).
     if (crearUsuarioPos) {
+      // Sucursal inicial (C1): SOLO las empresas con POS proyectan su
+      // establecimiento. operation_id propio (uuid v5) — el POS deduplica
+      // por (tenant_id, operation_id) y descartaría un id repetido.
+      const operationIdBranch = operationIdEventoAlta('BRANCH_VINCULADO', branchId);
       await obtenerOutbox().publicarEvento({
-        operation_id: operationIdNorm,
+        operation_id: operationIdBranch,
+        tenant_id: tenantId,
+        branch_id: branchId,
+        tipo_evento: 'BRANCH_VINCULADO',
+        payload: {
+          branch_id: branchId,
+          establecimiento_id: establecimientoId,
+          fiscal_status: 'ready',
+          nombre: est.nombre,
+          direccion: est.direccion || null,
+          telefono: est.telefono || null,
+          cod_estable_mh: est.cod_estable_mh,
+          cod_punto_venta_mh: est.cod_punto_venta_mh,
+          tipo_establecimiento: est.tipo_establecimiento || '02',
+          departamento_cod: est.departamento_cod,
+          municipio_cod: est.municipio_cod,
+        },
+      });
+
+      await audit({
+        tenant_id: tenantId,
+        evento: 'PROVISION_BRANCH_VINCULADO',
+        detalles: {
+          operation_id: operationIdBranch,
+          branch_id: branchId,
+          establecimiento_id: establecimientoId,
+        },
+        usuario_id: usuario?.id || null,
+        ip,
+        status_http: 201,
+      });
+
+      logger.info('Sucursal inicial vinculada al POS (bootstrap)', {
+        tenant_id: tenantId,
+        branch_id: branchId,
+        establecimiento_id: establecimientoId,
+        fiscal_status: 'ready',
+      });
+
+      const operationIdUsuario = operationIdEventoAlta('USUARIO_INICIAL', tenantId);
+      await obtenerOutbox().publicarEvento({
+        operation_id: operationIdUsuario,
         tenant_id: tenantId,
         tipo_evento: 'USUARIO_INICIAL',
         payload: {
@@ -610,7 +671,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
         tenant_id: tenantId,
         evento: 'PROVISION_USUARIO_INICIAL',
         detalles: {
-          operation_id: operationIdNorm,
+          operation_id: operationIdUsuario,
           email: emailNorm,
           rol: 'administrador',
           destino: 'pos',
