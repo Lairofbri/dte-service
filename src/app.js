@@ -8,6 +8,7 @@ const cors         = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit    = require('express-rate-limit'); 
 const { CORS_ORIGINS, ES_PRODUCCION } = require('./config/env');
+const { esOrigenPermitido } = require('./config/cors');
 const logger     = require('./utils/logger');
 const { noEncontrado, errorServidor } = require('./utils/response');
 
@@ -59,12 +60,13 @@ app.get('/health', (_req, res) => {
 
 // ─────────────────────────────────────────────
 // CORS — solo el POS puede consumir este servicio
+// CORS es del NAVEGADOR: los requests sin `Origin` (servidor-a-servidor, p.ej.
+// pos-backend → `/api/tenants` o `/internal/provisioning/*`) se permiten
+// siempre; ver src/config/cors.js.
 // ─────────────────────────────────────────────
 app.use(cors({
   origin: (origin, callback) => {
-    // Permitir requests sin origin solo en desarrollo (Postman, etc.)
-    if (!origin && !ES_PRODUCCION) return callback(null, true);
-    if (CORS_ORIGINS.includes(origin)) return callback(null, true);
+    if (esOrigenPermitido(origin, CORS_ORIGINS)) return callback(null, true);
     logger.warn('CORS bloqueado', { origin });
     callback(new Error(`Origen no permitido: ${origin}`));
   },
