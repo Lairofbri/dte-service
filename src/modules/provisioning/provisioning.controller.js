@@ -3,6 +3,7 @@
 // Principio S (SOLID): solo orquesta request → service → response.
 
 const service = require('./provisioning.service');
+const { tieneRol, puedeAdministrarTenant } = require('../../utils/roles');
 const { exito, creado, error, errorServidor, noAutenticado, sinPermiso } = require('../../utils/response');
 const logger = require('../../utils/logger');
 
@@ -109,7 +110,7 @@ const crearTenantDesdePlataforma = async (req, res) => {
   if (!req.usuario || !req.usuario.tenant_id) {
     return noAutenticado(res, 'Autenticación de usuario requerida.');
   }
-  if (req.usuario.rol !== 'plataforma') {
+  if (!tieneRol(req.usuario, 'plataforma')) {
     return sinPermiso(res, 'Solo usuarios de plataforma pueden iniciar el alta de empresas.');
   }
   try {
@@ -138,7 +139,7 @@ const actualizarTenantDesdePlataforma = async (req, res) => {
   if (!req.usuario || !req.usuario.tenant_id) {
     return noAutenticado(res, 'Autenticación de usuario requerida.');
   }
-  if (req.usuario.rol !== 'plataforma') {
+  if (!tieneRol(req.usuario, 'plataforma')) {
     return sinPermiso(res, 'Solo usuarios de plataforma pueden editar empresas.');
   }
   try {
@@ -159,7 +160,7 @@ const actualizarAdminDesdePlataforma = async (req, res) => {
   if (!req.usuario || !req.usuario.tenant_id) {
     return noAutenticado(res, 'Autenticación de usuario requerida.');
   }
-  if (req.usuario.rol !== 'plataforma') {
+  if (!tieneRol(req.usuario, 'plataforma')) {
     return sinPermiso(res, 'Solo usuarios de plataforma pueden editar el administrador de una empresa.');
   }
   try {
@@ -175,6 +176,30 @@ const actualizarAdminDesdePlataforma = async (req, res) => {
   }
 };
 
+/** POST /api/provisioning/tenants/:tenantId/habilitar-pos — habilitar POS en una empresa "solo DTE". */
+const habilitarPosTenant = async (req, res) => {
+  if (!req.usuario || !req.usuario.tenant_id) {
+    return noAutenticado(res, 'Autenticación de usuario requerida.');
+  }
+  if (!tieneRol(req.usuario, 'plataforma')) {
+    return sinPermiso(res, 'Solo usuarios de plataforma pueden habilitar POS en una empresa.');
+  }
+  try {
+    const resultado = await service.habilitarPosTenant({
+      tenantId: req.params.tenantId,
+      datos: req.body,
+      usuario: req.usuario,
+      ip: req.ip,
+    });
+    if (resultado.ya_habilitado) {
+      return exito(res, resultado, 'La empresa ya tenía POS habilitado.');
+    }
+    return creado(res, resultado, 'POS habilitado. La API Key se devuelve UNA sola vez.');
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
 // ─────────────────────────────────────────────
 // ESTADO VISIBLE AL ADMINISTRADOR DTE
 // ─────────────────────────────────────────────
@@ -184,9 +209,8 @@ const listarEstadoProvision = async (req, res) => {
   if (!req.usuario || !req.usuario.tenant_id) {
     return noAutenticado(res, 'Autenticación de usuario requerida.');
   }
-  const esPlataforma = req.usuario.rol === 'plataforma';
-  const esAdministrador = req.usuario.rol === 'administrador';
-  if (!esPlataforma && !esAdministrador) {
+  const esPlataforma = tieneRol(req.usuario, 'plataforma');
+  if (!puedeAdministrarTenant(req.usuario)) {
     return sinPermiso(res, 'Solo administradores o usuarios de plataforma pueden ver el estado de provisión.');
   }
   try {
@@ -209,5 +233,6 @@ module.exports = {
   crearTenantDesdePlataforma,
   actualizarTenantDesdePlataforma,
   actualizarAdminDesdePlataforma,
+  habilitarPosTenant,
   listarEstadoProvision,
 };

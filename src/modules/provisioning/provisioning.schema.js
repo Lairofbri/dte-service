@@ -231,6 +231,25 @@ const actualizarAdminTenantSchema = Joi.object({
   'object.min': 'Debe enviar al menos un campo para actualizar.',
 });
 
+/**
+ * Habilitar POS para una empresa creada "solo DTE" (2026-10-16).
+ * Captura el PIN del usuario POS (el administrador inicial ya existe en DTE y
+ * su contraseña rige en ambas plataformas); el backend genera/entrega la API
+ * Key técnica una sola vez y publica los eventos de proyección al POS.
+ */
+const habilitarPosSchema = Joi.object({
+  operation_id: Joi.string().uuid().optional().messages({
+    'string.guid': 'operation_id debe ser un UUID v4 válido.',
+  }),
+  pin: Joi.string()
+    .pattern(/^\d{6}$/)
+    .required()
+    .messages({
+      'string.pattern.base': 'El PIN (usuario POS) debe tener exactamente 6 dígitos.',
+      'any.required': 'El PIN del usuario POS es requerido para habilitar POS.',
+    }),
+});
+
 const actualizarEstadoSchema = Joi.object({
   operation_id: Joi.string().uuid().optional().messages({
     'string.guid': 'operation_id debe ser un UUID v4 válido.',
@@ -375,6 +394,7 @@ module.exports = {
   actualizarTenantPlataformaSchema,
   actualizarAdminTenantSchema,
   actualizarEstadoSchema,
+  habilitarPosSchema,
   confirmarEventoSchema,
   vincularSucursalSchema,
   recibirEventoSchema,

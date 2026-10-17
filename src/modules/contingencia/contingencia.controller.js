@@ -10,6 +10,7 @@
 const service = require('./contingencia.service');
 const { notificarContingenciaSchema } = require('./contingencia.schema');
 const { esUuidValido } = require('../../middlewares/uuid.middleware');
+const { puedeAdministrarTenant } = require('../../utils/roles');
 const {
   exito,
   error,
@@ -18,7 +19,7 @@ const {
 const logger = require('../../utils/logger');
 
 const obtenerEstablecimientoAutorizado = (req, value = {}) => (
-  req.usuario?.rol === 'administrador'
+  puedeAdministrarTenant(req.usuario)
     ? null
     : req.usuario?.establecimiento_id || value.establecimiento_id || null
 );

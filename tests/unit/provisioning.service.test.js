@@ -110,6 +110,20 @@ const crearDbFake = () => {
       return { rows: fila ? [fila] : [] };
     }
 
+    // Admin inicial activo del tenant (habilitar-pos, multi-rol).
+    if (
+      sql.includes('FROM usuarios') &&
+      sql.includes('password_hash') &&
+      sql.includes("'administrador' = ANY(roles)") &&
+      sql.includes('LIMIT 1')
+    ) {
+      const fila = [...usuarios.values()].find(
+        (u) => u.tenant_id === params[0] &&
+          (u.rol === 'administrador' || (u.roles || []).includes('administrador'))
+      );
+      return { rows: fila ? [fila] : [] };
+    }
+
     // Buscar por provisioning_operation_id
     if (sql.includes('FROM tenants WHERE provisioning_operation_id')) {
       const encontrado = [...tenants.values()].find((t) => t.provisioning_operation_id === params[0]);
@@ -124,17 +138,20 @@ const crearDbFake = () => {
 
     // Insertar tenant
     if (sql.startsWith('INSERT INTO tenants')) {
+      // Alta POS (8 params): api_key_hash=$6, operation_id=$7, tiene_pos=$8.
+      // Alta plataforma/DTE (7 params): api_key_hash NULL literal,
+      // operation_id=$6, tiene_pos=$7.
+      const altaPos = params.length > 7;
       const tenant = {
         id: params[0],
         nombre: params[1],
         nombre_comercial: params[2],
         nit: params[3],
         nrc: params[4],
-        // Alta POS: params[5]=api_key_hash, params[6]=operation_id.
-        // Alta plataforma (2026-10-10): api_key_hash NULL literal → 6 params.
-        api_key_hash: params.length > 6 ? params[5] : null,
+        api_key_hash: altaPos ? params[5] : null,
         provisioning_status: 'pending_fiscal_setup',
-        provisioning_operation_id: params.length > 6 ? params[6] : params[5],
+        provisioning_operation_id: altaPos ? params[6] : params[5],
+        tiene_pos: altaPos ? !!params[7] : !!params[6],
         activo: true,
         last_pos_sync_at: null,
         creado_en: new Date().toISOString(),
@@ -147,6 +164,16 @@ const crearDbFake = () => {
       }
       tenants.set(tenant.id, tenant);
       return { rows: [tenant] };
+    }
+
+    // Habilitar POS (tiene_pos + api_key_hash).
+    if (sql.includes('SET tiene_pos = TRUE')) {
+      const tenant = tenants.get(params[1]);
+      if (tenant) {
+        tenant.tiene_pos = true;
+        tenant.api_key_hash = params[0];
+      }
+      return { rows: tenant ? [tenant] : [] };
     }
 
     // Actualizar api_key_hash (rotación)
@@ -200,6 +227,26 @@ const crearDbFake = () => {
       const clave = `${params[0]}|${params[1]}`;
       const encontrado = establecimientos.get(clave);
       return { rows: encontrado ? [encontrado] : [] };
+    }
+
+    // ── habilitar-pos (2026-10-16): establecimientos con branch_id del tenant ──
+    if (sql.includes('FROM establecimientos') && sql.includes('branch_id IS NOT NULL')) {
+      const lista = [...establecimientos.values()]
+        .filter((e) => e.tenant_id === params[0] && e.branch_id)
+        .map((e) => ({
+          id: e.id,
+          branch_id: e.branch_id,
+          nombre: e.nombre,
+          direccion: e.direccion,
+          telefono: e.telefono,
+          cod_estable_mh: e.cod_estable_mh,
+          cod_punto_venta_mh: e.cod_punto_venta_mh,
+          tipo_establecimiento: e.tipo_establecimiento,
+          departamento_cod: e.departamento_cod,
+          municipio_cod: e.municipio_cod,
+          fiscal_status: e.fiscal_status,
+        }));
+      return { rows: lista };
     }
 
     // ── FASE 4: lista de establecimientos del tenant (estado fiscal) ──
@@ -686,6 +733,99 @@ test('crearTenantDesdePlataforma sin toggle POS: crea solo el admin DTE (sin PIN
     'sin toggle POS no se publica BRANCH_VINCULADO (spec §6.4)'
   );
   assert.ok(!JSON.stringify(eventos).includes('hash'), 'sin hashes ni credenciales POS');
+});
+
+test('habilitarPosTenant habilita POS en una empresa "solo DTE": API Key, sucursal y usuario', async () => {
+  const db = crearDbFake();
+  const auditoria = [];
+  const outbox = crearOutboxFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async (entrada) => { auditoria.push(entrada); },
+    outbox,
+    validarUbicacion: async () => [],
+  });
+
+  // Alta "solo DTE" (sin toggle POS): sin API Key, sin eventos de POS.
+  await servicio.crearTenantDesdePlataforma({
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa Solo DTE',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      nombre_usuario: 'Admin Demo',
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+    },
+    operationId: OP2,
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+  assert.equal(db.obtener(TENANT2).tiene_pos, false);
+  assert.equal(db.obtener(TENANT2).api_key_hash, null);
+
+  const resultado = await servicio.habilitarPosTenant({
+    tenantId: TENANT2,
+    datos: { pin: '123456' },
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+
+  assert.equal(resultado.tiene_pos, true);
+  assert.equal(resultado.ya_habilitado, false);
+  assert.ok(resultado.api_key && resultado.api_key.length === 64, 'devuelve la API Key una vez');
+  assert.ok(db.obtener(TENANT2).api_key_hash.startsWith('$2'), 'solo el hash bcrypt se persiste');
+  assert.equal(db.obtener(TENANT2).tiene_pos, true);
+
+  const eventos = outbox.eventos();
+  assert.ok(eventos.some((e) => e.tipo_evento === 'BRANCH_VINCULADO'), 'proyecta la sucursal existente');
+  const usuarioEvento = eventos.find((e) => e.tipo_evento === 'USUARIO_INICIAL');
+  assert.ok(usuarioEvento, 'proyecta el usuario POS');
+  assert.match(usuarioEvento.payload.password_hash, /^\$2[aby]\$\d{2}\$/, 'password_hash bcrypt');
+  assert.match(usuarioEvento.payload.pin_hash, /^\$2[aby]\$\d{2}\$/, 'pin_hash bcrypt');
+  assert.ok(!JSON.stringify(usuarioEvento).includes('123456'), 'el PIN en claro NUNCA viaja al POS');
+  assert.ok(!JSON.stringify(auditoria).includes(resultado.api_key), 'la auditoría no expone la API Key');
+
+  // Idempotente: ya habilitado → no rota la clave ni reentrega eventos.
+  const repetido = await servicio.habilitarPosTenant({
+    tenantId: TENANT2,
+    datos: { pin: '123456' },
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+  assert.equal(repetido.ya_habilitado, true);
+  assert.equal(repetido.api_key, null);
+});
+
+test('habilitarPosTenant valida tenant inexistente y PIN inválido', async () => {
+  const db = crearDbFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async () => {},
+    outbox: { publicarEvento: async () => {} },
+    validarUbicacion: async () => [],
+  });
+
+  await assert.rejects(
+    servicio.habilitarPosTenant({ tenantId: TENANT2, datos: { pin: '123456' } }),
+    (err) => err.status === 404
+  );
+
+  await servicio.crearTenantDesdePlataforma({
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa Solo DTE',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      nombre_usuario: 'Admin Demo',
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+    },
+    operationId: OP2,
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+
+  await assert.rejects(
+    servicio.habilitarPosTenant({ tenantId: TENANT2, datos: { pin: '12' } }),
+    (err) => err.status === 400 && /PIN/i.test(err.mensaje)
+  );
 });
 
 test('crearTenantDesdePlataforma rechaza payloads inválidos (credenciales, PIN y establecimiento faltante)', async () => {

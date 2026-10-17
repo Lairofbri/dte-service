@@ -18,6 +18,7 @@ const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
 const { query } = require('../../config/database');
 const usuariosService = require('../usuarios/usuarios.service');
+const { rolesDeUsuario } = require('../../utils/roles');
 const {
   JWT_SECRET,
   JWT_EXPIRA_EN,
@@ -39,14 +40,18 @@ const hashearRefreshToken = (token) =>
 
 /**
  * Generar access token JWT
- * Payload estandarizado: sub, tenant_id, rol, sucursal_id, establecimiento_id, email
+ * Payload estandarizado: sub, tenant_id, rol, roles, sucursal_id,
+ * establecimiento_id, email
+ * `rol` es el principal (legacy); `roles` la lista completa (multi-rol).
  */
 const generarAccessToken = (usuario) => {
+  const roles = rolesDeUsuario(usuario);
   return jwt.sign(
     {
       sub:                usuario.id,
       tenant_id:          usuario.tenant_id,
-      rol:                usuario.rol,
+      rol:                usuario.rol || roles[0] || null,
+      roles,
       sucursal_id:        usuario.sucursal_id || null,
       establecimiento_id: usuario.establecimiento_id || null,
       email:              usuario.email,
@@ -152,6 +157,7 @@ const login = async ({ email, password, tenant_id }) => {
       nombre:             usuario.nombre,
       email:              usuario.email,
       rol:                usuario.rol,
+      roles:              rolesDeUsuario(usuario),
       establecimiento_id: usuario.establecimiento_id,
       tenant_id:          usuario.tenant_id,
       establecimiento:    usuario.establecimiento_nombre ? {
@@ -181,6 +187,7 @@ const refresh = async ({ refreshToken }) => {
        u.nombre,
        u.email,
        u.rol,
+       u.roles,
        u.establecimiento_id,
        u.tenant_id,
        u.activo           AS usuario_activo,
@@ -244,6 +251,7 @@ const refresh = async ({ refreshToken }) => {
     id:                 t.u_id,
     email:              t.email,
     rol:                t.rol,
+    roles:              t.roles,
     establecimiento_id: t.establecimiento_id,
     tenant_id:          t.tenant_id,
   });

@@ -17,6 +17,7 @@ const {
   filtrosDTESchema,
 } = require('./dtes.schema');
 const { esUuidValido } = require('../../middlewares/uuid.middleware');
+const { puedeAdministrarTenant } = require('../../utils/roles');
 const {
   exito,
   creado,
@@ -42,7 +43,7 @@ const obtenerTenantAutenticado = (req) =>
  * (`obtenerConfigYEstablecimiento`).
  */
 const resolverEstablecimientoId = (usuario, valorBody) => {
-  if (usuario?.rol === 'administrador') {
+  if (puedeAdministrarTenant(usuario)) {
     return valorBody || usuario?.establecimiento_id || null;
   }
   return usuario?.establecimiento_id || valorBody || null;
@@ -220,7 +221,7 @@ datos: {
         tenant_id: obtenerTenantAutenticado(req),
         // JWT: admin → tenant-wide; operador → su establecimiento fijo.
         // API Key (POS): establecimiento original del DTE enviado en el body.
-        establecimiento_id: req.usuario?.rol === 'administrador'
+        establecimiento_id: puedeAdministrarTenant(req.usuario)
           ? null
           : req.usuario?.establecimiento_id || value.establecimiento_id || null,
       },
@@ -262,7 +263,7 @@ const listarDTEs = async (req, res) => {
     const resultado = await service.listarDTEs({
       filtros: {
         ...filtros,
-        establecimiento_id: req.usuario?.rol === 'administrador'
+        establecimiento_id: puedeAdministrarTenant(req.usuario)
           ? filtros.establecimiento_id
           : undefined,
       },

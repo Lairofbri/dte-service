@@ -12,9 +12,25 @@
 
 const bcrypt           = require('bcryptjs');
 const { query, getClient } = require('../../config/database');
+const { ordenarRoles, rolesDeUsuario, esRolAdministrador } = require('../../utils/roles');
 const logger           = require('../../utils/logger');
 
 const BCRYPT_ROUNDS = 12;
+
+// ─────────────────────────────────────────────
+// HELPER: normalizar entrada de roles (multi-rol)
+// Acepta `roles` (array) o `rol` (string legacy) y siempre deriva un array
+// ordenado por privilegio. El "rol principal" lo sincroniza el trigger de BD.
+// ─────────────────────────────────────────────
+const normalizarRolesEntrada = (datos) => {
+  if (datos.roles !== undefined) {
+    return { ...datos, roles: ordenarRoles(datos.roles) };
+  }
+  if (datos.rol !== undefined) {
+    return { ...datos, roles: ordenarRoles([datos.rol]) };
+  }
+  return datos;
+};
 
 // ─────────────────────────────────────────────
 // HELPER: formatear usuario para respuesta HTTP
@@ -26,6 +42,7 @@ const formatearUsuario = (row) => ({
   nombre:             row.nombre,
   email:              row.email,
   rol:                row.rol,
+  roles:              rolesDeUsuario(row),
   establecimiento_id: row.establecimiento_id,
   establecimiento:    row.establecimiento_nombre ? {
     id:     row.establecimiento_id,
@@ -72,6 +89,7 @@ const listarUsuarios = async ({ soloActivos = false, tenant_id } = {}) => {
        u.nombre,
        u.email,
        u.rol,
+       u.roles,
        u.establecimiento_id,
        u.activo,
        u.intentos_fallidos,
@@ -107,6 +125,7 @@ const obtenerUsuario = async ({ id, tenant_id }) => {
        u.nombre,
        u.email,
        u.rol,
+       u.roles,
        u.establecimiento_id,
        u.activo,
        u.intentos_fallidos,
@@ -147,6 +166,7 @@ const obtenerUsuarioPorEmail = async ({ email, tenant_id }) => {
        u.email,
        u.password_hash,
        u.rol,
+       u.roles,
        u.establecimiento_id,
        u.tenant_id,
        u.activo,
@@ -176,10 +196,11 @@ const crearUsuario = async ({ datos, tenant_id }) => {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para crear un usuario.' };
   }
 
+  const datosNorm = normalizarRolesEntrada(datos);
   const {
     nombre, email, password,
-    rol, establecimiento_id,
-  } = datos;
+    roles, establecimiento_id,
+  } = datosNorm;
 
   // Verificar que el email no existe ya dentro del mismo tenant
   const { rows: emailExiste } = await query(
@@ -214,10 +235,10 @@ const crearUsuario = async ({ datos, tenant_id }) => {
   const { rows } = await query(
     `INSERT INTO usuarios (
        nombre, email, password_hash,
-       rol, establecimiento_id, tenant_id
-     ) VALUES ($1,$2,$3,$4,$5,$6)
+       roles, establecimiento_id, tenant_id
+     ) VALUES ($1,$2,$3,$4::text[],$5,$6)
      RETURNING
-       id, nombre, email, rol,
+       id, nombre, email, rol, roles,
        establecimiento_id, activo,
        intentos_fallidos, bloqueado_hasta,
        ultimo_login, creado_en, actualizado_en`,
@@ -225,7 +246,7 @@ const crearUsuario = async ({ datos, tenant_id }) => {
       nombre,
       email.toLowerCase(),
       password_hash,
-      rol,
+      roles,
       establecimiento_id,
       tenant_id,
     ]
@@ -234,7 +255,7 @@ const crearUsuario = async ({ datos, tenant_id }) => {
   logger.info('Usuario creado', {
     id:     rows[0].id,
     email:  rows[0].email,
-    rol,
+    roles,
     establecimiento_id,
     // NUNCA loguear el password
   });
@@ -248,19 +269,25 @@ const crearUsuario = async ({ datos, tenant_id }) => {
  * Si se cambia el rol verificar que no queda sin administradores
  * Email único verificado antes de actualizar
  */
-const actualizarUsuario = async ({ id, datos, tenant_id }) => {
+const actualizarUsuario = async ({ id, datos: datosEntrada, tenant_id }) => {
   // Fase 2: el tenant es obligatorio.
   if (!tenant_id) {
     throw { status: 400, mensaje: 'Tenant autenticado requerido para actualizar un usuario.' };
   }
 
+  // Multi-rol: normalizar `roles`/`rol` a un array ordenado.
+  const datos = normalizarRolesEntrada(datosEntrada);
+
   // Verificar que el usuario existe y pertenece al tenant
   const usuarioActual = await obtenerUsuario({ id, tenant_id });
 
-  // Determinar si necesitamos protección de último administrador
-  const necesitaProteccionAdmin = (
-    (datos.activo === false && usuarioActual.rol === 'administrador') ||
-    (datos.rol === 'operador' && usuarioActual.rol === 'administrador')
+  // Determinar si necesitamos protección de último administrador.
+  // - Desactivar a un administrador.
+  // - Quitarle el rol `administrador` (multi-rol: `roles` ya no lo incluye).
+  const esAdminActual = esRolAdministrador(usuarioActual);
+  const necesitaProteccionAdmin = esAdminActual && (
+    datos.activo === false ||
+    (datos.roles !== undefined && !datos.roles.includes('administrador'))
   );
 
   // Si se actualiza el email verificar que no existe en otro usuario del mismo tenant
@@ -287,7 +314,7 @@ const actualizarUsuario = async ({ id, datos, tenant_id }) => {
 
   // Construir SET dinámico
   const camposPermitidos = [
-    'nombre', 'email', 'rol',
+    'nombre', 'email', 'roles',
     'establecimiento_id', 'activo',
   ];
 
@@ -297,7 +324,8 @@ const actualizarUsuario = async ({ id, datos, tenant_id }) => {
 
   for (const campo of camposPermitidos) {
     if (datos[campo] !== undefined) {
-      campos.push(`${campo} = $${idx++}`);
+      // `roles` es TEXT[] — el cast explícito evita ambigüedad de tipo al bindear.
+      campos.push(campo === 'roles' ? `roles = $${idx++}::text[]` : `${campo} = $${idx++}`);
       // Email siempre en minúsculas
       valores.push(campo === 'email' ? datos[campo].toLowerCase() : datos[campo]);
     }
@@ -332,7 +360,7 @@ const actualizarUsuario = async ({ id, datos, tenant_id }) => {
       const { rows: admins } = await client.query(
         `SELECT COUNT(*) AS total
          FROM usuarios
-         WHERE rol = 'administrador'
+         WHERE 'administrador' = ANY(roles)
            AND activo = TRUE
            AND tenant_id = $1
            AND id != $2
@@ -354,7 +382,7 @@ const actualizarUsuario = async ({ id, datos, tenant_id }) => {
        SET ${campos.join(', ')}
        WHERE id = $${idx} AND tenant_id = $${idx + 1}
        RETURNING
-         id, nombre, email, rol,
+         id, nombre, email, rol, roles,
          establecimiento_id, activo,
          intentos_fallidos, bloqueado_hasta,
          ultimo_login, creado_en, actualizado_en`,
@@ -412,13 +440,13 @@ const desactivarUsuario = async ({ id, tenant_id }) => {
   try {
     await client.query('BEGIN');
 
-    if (usuario.rol === 'administrador') {
+    if (esRolAdministrador(usuario)) {
       // SELECT FOR UPDATE bloquea las filas de administradores activos
       // evita que dos requests simultáneos pasen la verificación
       const { rows } = await client.query(
         `SELECT COUNT(*) AS total
          FROM usuarios
-         WHERE rol = 'administrador'
+         WHERE 'administrador' = ANY(roles)
            AND activo = TRUE
            AND tenant_id = $1
            AND id != $2

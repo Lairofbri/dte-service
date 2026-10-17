@@ -1,6 +1,7 @@
 const jwt    = require('jsonwebtoken');
 const { JWT_SECRET } = require('../config/env');
 const { noAutenticado, sinPermiso } = require('../utils/response');
+const { rolesDeUsuario, tieneRol, puedeAdministrarTenant } = require('../utils/roles');
 const logger = require('../utils/logger');
 
 const autenticarJWT = (req, res, next) => {
@@ -27,10 +28,16 @@ const autenticarJWT = (req, res, next) => {
       return noAutenticado(res, 'Token sin establecimiento. Inicia sesión nuevamente.');
     }
 
+    // Multi-rol (migración 035): el token lleva `roles`; `rol` se conserva
+    // como principal por compatibilidad. Tokens previos sin `roles` caen a
+    // `[rol]` vía `rolesDeUsuario`.
+    const roles = rolesDeUsuario({ roles: payload.roles, rol: payload.rol });
+
     req.usuario = {
       id:                 payload.sub,
       email:              payload.email,
       rol:                payload.rol,
+      roles,
       sucursal_id:        payload.sucursal_id || null,
       establecimiento_id: payload.establecimiento_id || null,
       tenant_id:          payload.tenant_id,
@@ -51,18 +58,24 @@ const autenticarJWT = (req, res, next) => {
   }
 };
 
+/**
+ * Requiere un JWT válido con rol `administrador` (estricto).
+ * Se usa cuando el permiso no debe extenderse a `plataforma`.
+ */
 const soloAdministrador = (req, res, next) => {
   if (!req.usuario) {
     return noAutenticado(res, 'Token de autenticación requerido.');
   }
-  if (req.usuario.rol !== 'administrador') {
+  if (!tieneRol(req.usuario, 'administrador')) {
     return sinPermiso(res, 'Solo los administradores pueden realizar esta acción.');
   }
   next();
 };
 
 /**
- * Requiere un JWT válido de rol administrador.
+ * Requiere un JWT válido que pueda administrar el tenant:
+ * `administrador` o `plataforma` (multi-rol, 2026-10-16).
+ *
  * A diferencia de soloAdministrador, también exige tenant autenticado,
  * de modo que las API Keys de integración (POS) NUNCA puedan operar
  * rutas administrativas.
@@ -71,7 +84,7 @@ const requiereAdministrador = (req, res, next) => {
   if (!req.usuario || !req.usuario.tenant_id) {
     return noAutenticado(res, 'Autenticación de administrador requerida.');
   }
-  if (req.usuario.rol !== 'administrador') {
+  if (!puedeAdministrarTenant(req.usuario)) {
     return sinPermiso(res, 'Solo los administradores pueden realizar esta acción.');
   }
   next();
@@ -105,16 +118,17 @@ const requiereTenant = (req, res, next) => {
 };
 
 /**
- * Requiere un JWT válido de rol plataforma (onboarding).
+ * Requiere un JWT válido con rol `plataforma` (onboarding).
  * Es el rol separado que permite operaciones de provisión/alta de empresas.
  * Un administrador o operador normal NO puede realizar onboarding.
+ * Puede combinarse con otros roles (multi-rol): basta con tener `plataforma`.
  * Solo usuarios con JWT (nunca API Key de integración) pueden pasar.
  */
 const requierePlataforma = (req, res, next) => {
   if (!req.usuario || !req.usuario.tenant_id) {
     return noAutenticado(res, 'Autenticación de usuario requerida.');
   }
-  if (req.usuario.rol !== 'plataforma') {
+  if (!tieneRol(req.usuario, 'plataforma')) {
     return sinPermiso(res, 'Solo usuarios de plataforma pueden realizar esta acción.');
   }
   next();

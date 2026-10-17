@@ -25,6 +25,7 @@ const {
   actualizarTenantPlataformaSchema,
   actualizarAdminTenantSchema,
   actualizarEstadoSchema,
+  habilitarPosSchema,
   vincularSucursalSchema,
 } = require('./provisioning.schema');
 
@@ -103,6 +104,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     provisioning_status: row.provisioning_status,
     provisioning_operation_id: row.provisioning_operation_id || null,
     last_pos_sync_at: row.last_pos_sync_at || null,
+    tiene_pos: !!row.tiene_pos,
     creado_en: row.creado_en,
     activo: row.activo,
   });
@@ -173,7 +175,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     // 1. Idempotencia por operation_id.
     const { rows: porOperacion } = await obtenerDb().query(
 `SELECT id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-        provisioning_operation_id, last_pos_sync_at, creado_en, activo
+        provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo
        FROM tenants WHERE provisioning_operation_id = $1`,
       [operationIdNorm]
     );
@@ -184,7 +186,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     // 2. Idempotencia por tenant_id.
     const { rows: porId } = await obtenerDb().query(
 `SELECT id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-        provisioning_operation_id, last_pos_sync_at, creado_en, activo
+        provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo
        FROM tenants WHERE id = $1`,
       [tenantId]
     );
@@ -204,16 +206,16 @@ const crearServicioProvisioning = (dependencias = {}) => {
       await obtenerDb().query(
         `INSERT INTO tenants
            (id, nombre, nombre_comercial, nit, nrc, api_key_hash, provisioning_status,
-            provisioning_operation_id, activo)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending_fiscal_setup', $7, TRUE)`,
-        [tenantId, value.nombre, value.nombre_comercial || null, value.nit, value.nrc || null, apiKeyHash, operationIdNorm]
+            provisioning_operation_id, activo, tiene_pos)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending_fiscal_setup', $7, TRUE, $8)`,
+        [tenantId, value.nombre, value.nombre_comercial || null, value.nit, value.nrc || null, apiKeyHash, operationIdNorm, generarClave]
       );
     } catch (err) {
       if (err.code === '23505') {
         // Carrera: otra request creó el tenant entre SELECT e INSERT.
         const { rows: existentes } = await obtenerDb().query(
           `SELECT id, nombre, nit, nrc, provisioning_status, provisioning_operation_id,
-                  last_pos_sync_at, creado_en, activo
+                  last_pos_sync_at, tiene_pos, creado_en, activo
            FROM tenants WHERE id = $1`,
           [tenantId]
         );
@@ -236,6 +238,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
       provisioning_status: 'pending_fiscal_setup',
       provisioning_operation_id: operationIdNorm,
       last_pos_sync_at: null,
+      tiene_pos: !!generarClave,
       creado_en: new Date().toISOString(),
       activo: true,
     };
@@ -339,7 +342,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     const { rows } = await obtenerDb().query(
       `SELECT
          t.id, t.nombre, t.nit, t.nrc, t.provisioning_status,
-         t.provisioning_operation_id, t.last_pos_sync_at, t.creado_en, t.activo,
+         t.provisioning_operation_id, t.last_pos_sync_at, t.creado_en, t.activo, t.tiene_pos,
          (t.api_key_hash IS NOT NULL) AS tiene_api_key,
          COUNT(e.id) FILTER (WHERE e.estado IN ('pendiente', 'enviado')) AS eventos_pendientes,
          COUNT(e.id) FILTER (WHERE e.estado = 'fallido') AS eventos_fallidos,
@@ -351,7 +354,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
        LEFT JOIN LATERAL (
          SELECT id, email, nombre
          FROM usuarios
-         WHERE tenant_id = t.id AND rol = 'administrador' AND activo = TRUE
+         WHERE tenant_id = t.id AND 'administrador' = ANY(roles) AND activo = TRUE
          ORDER BY creado_en ASC
          LIMIT 1
        ) a ON TRUE
@@ -444,7 +447,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
       // ── 1. TENANT (idempotencia por operation_id / tenant_id) ──
       const { rows: porOperacion } = await client.query(
         `SELECT id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-                provisioning_operation_id, last_pos_sync_at, creado_en, activo
+                provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo
          FROM tenants WHERE provisioning_operation_id = $1`,
         [operationIdNorm]
       );
@@ -454,7 +457,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
       } else {
         const { rows: porId } = await client.query(
           `SELECT id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-                  provisioning_operation_id, last_pos_sync_at, creado_en, activo
+                  provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo
            FROM tenants WHERE id = $1`,
           [tenantId]
         );
@@ -469,12 +472,12 @@ const crearServicioProvisioning = (dependencias = {}) => {
           const { rows: nuevos } = await client.query(
             `INSERT INTO tenants
                (id, nombre, nombre_comercial, nit, nrc, api_key_hash, provisioning_status,
-                provisioning_operation_id, activo)
-             VALUES ($1, $2, $3, $4, $5, NULL, 'pending_fiscal_setup', $6, TRUE)
+                provisioning_operation_id, activo, tiene_pos)
+             VALUES ($1, $2, $3, $4, $5, NULL, 'pending_fiscal_setup', $6, TRUE, $7)
              RETURNING id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-                       provisioning_operation_id, last_pos_sync_at, creado_en, activo`,
+                       provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo`,
             [tenantId, datosTenant.nombre, datosTenant.nombre_comercial || null,
-             datosTenant.nit, datosTenant.nrc || null, operationIdNorm]
+             datosTenant.nit, datosTenant.nrc || null, operationIdNorm, !!crearUsuarioPos]
           );
           tenantRow = nuevos[0];
         } catch (err) {
@@ -482,7 +485,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
             // Carrera: otro request creó el tenant entre los SELECT y el INSERT.
             const { rows: existentes } = await client.query(
               `SELECT id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-                      provisioning_operation_id, last_pos_sync_at, creado_en, activo
+                      provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo
                FROM tenants WHERE id = $1`,
               [tenantId]
             );
@@ -743,7 +746,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
       `UPDATE tenants SET ${campos.join(', ')}, actualizado_en = NOW()
        WHERE id = $${idx}
        RETURNING id, nombre, nombre_comercial, nit, nrc, provisioning_status,
-                 provisioning_operation_id, last_pos_sync_at, creado_en, activo`,
+                 provisioning_operation_id, last_pos_sync_at, tiene_pos, creado_en, activo`,
       [...valores, tenantIdNorm]
     );
 
@@ -803,7 +806,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
 
     const { rows: admins } = await obtenerDb().query(
       `SELECT id, email FROM usuarios
-       WHERE tenant_id = $1 AND rol = 'administrador' AND activo = TRUE
+       WHERE tenant_id = $1 AND 'administrador' = ANY(roles) AND activo = TRUE
        ORDER BY creado_en ASC
        LIMIT 1`,
       [tenantIdNorm]
@@ -847,7 +850,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     const { rows: actualizado } = await obtenerDb().query(
       `UPDATE usuarios SET ${campos.join(', ')}, actualizado_en = NOW()
        WHERE id = $${idx}
-       RETURNING id, nombre, email, rol, activo`,
+       RETURNING id, nombre, email, rol, roles, activo`,
       [...valores, admin.id]
     );
 
@@ -871,8 +874,171 @@ const crearServicioProvisioning = (dependencias = {}) => {
       nombre: actualizado[0].nombre,
       email:  actualizado[0].email,
       rol:    actualizado[0].rol,
+      roles:  actualizado[0].roles,
       activo: actualizado[0].activo,
     };
+  };
+
+  /**
+   * Habilita POS para una empresa creada "solo DTE" (2026-10-16).
+   *
+   * El alta desde DTE puede crear empresas sin POS (toggle desactivado):
+   * quedan sin API Key técnica, sin sucursal proyectada y sin usuario POS.
+   * Este método cierra ese hueco cuando la empresa decide adquirir POS:
+   *   1. Genera la API Key técnica SOLO si no existe (hash bcrypt en DTE;
+   *      el texto plano se devuelve UNA vez para que el operador lo cargue).
+   *   2. Marca `tenants.tiene_pos = TRUE`.
+   *   3. Publica `BRANCH_VINCULADO` por cada establecimiento existente con
+   *      `branch_id` (proyección de sucursales en el POS).
+   *   4. Publica `USUARIO_INICIAL` con el MISMO password_hash del admin DTE
+   *      + el PIN capturado ahora (solo hashes viajan — spec §3.3).
+   *
+   * Idempotente: si la empresa ya tiene POS, no rota la clave ni reentrega
+   * eventos (devuelve `ya_habilitado: true`).
+   */
+  const habilitarPosTenant = async ({ tenantId, datos, usuario = null, ip = null }) => {
+    const tenantIdNorm = String(tenantId).toLowerCase();
+    const { error: validacionError, value } = habilitarPosSchema.validate(datos);
+    if (validacionError) {
+      throw { status: 400, mensaje: validacionError.details[0].message };
+    }
+
+    const { rows: tenants } = await obtenerDb().query(
+      `SELECT id, nombre, nit, nrc, nombre_comercial, provisioning_status,
+              provisioning_operation_id, last_pos_sync_at, tiene_pos, activo,
+              api_key_hash
+       FROM tenants WHERE id = $1`,
+      [tenantIdNorm]
+    );
+    if (tenants.length === 0) {
+      throw { status: 404, mensaje: 'Tenant no encontrado.' };
+    }
+    const tenant = tenants[0];
+    if (!tenant.activo) {
+      throw { status: 409, mensaje: 'El tenant está inactivo y no puede habilitar POS.' };
+    }
+
+    // Administrador inicial (el más antiguo activo): su contraseña ya rige en
+    // DTE; al POS viaja el MISMO hash + el PIN capturado ahora.
+    const { rows: admins } = await obtenerDb().query(
+      `SELECT id, nombre, email, password_hash
+       FROM usuarios
+       WHERE tenant_id = $1 AND 'administrador' = ANY(roles) AND activo = TRUE
+       ORDER BY creado_en ASC
+       LIMIT 1`,
+      [tenantIdNorm]
+    );
+    if (admins.length === 0) {
+      throw {
+        status: 409,
+        mensaje: 'La empresa no tiene un administrador activo para proyectar al POS.',
+      };
+    }
+    const admin = admins[0];
+
+    // Idempotencia: ya tiene POS → no se rota la clave ni se duplican eventos.
+    if (tenant.tiene_pos) {
+      return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: true, api_key: null };
+    }
+
+    // API Key técnica: se genera solo si no existe. Se devuelve UNA vez.
+    let apiKey = null;
+    let apiKeyHash = tenant.api_key_hash;
+    if (!apiKeyHash) {
+      apiKey = generarApiKey();
+      apiKeyHash = await bcryptImpl.hash(apiKey, BCRYPT_ROUNDS);
+    }
+
+    await obtenerDb().query(
+      'UPDATE tenants SET tiene_pos = TRUE, api_key_hash = $1, actualizado_en = NOW() WHERE id = $2',
+      [apiKeyHash, tenantIdNorm]
+    );
+
+    // Sucursales existentes → BRANCH_VINCULADO (proyección operativa en POS).
+    const { rows: establecimientos } = await obtenerDb().query(
+      `SELECT id, branch_id, nombre, direccion, telefono, cod_estable_mh,
+              cod_punto_venta_mh, tipo_establecimiento, departamento_cod,
+              municipio_cod, fiscal_status
+       FROM establecimientos
+       WHERE tenant_id = $1 AND branch_id IS NOT NULL
+       ORDER BY creado_en ASC`,
+      [tenantIdNorm]
+    );
+
+    for (const est of establecimientos) {
+      const operationIdBranch = operationIdEventoAlta('BRANCH_VINCULADO', est.branch_id);
+      await obtenerOutbox().publicarEvento({
+        operation_id: operationIdBranch,
+        tenant_id: tenantIdNorm,
+        branch_id: est.branch_id,
+        tipo_evento: 'BRANCH_VINCULADO',
+        payload: {
+          branch_id: est.branch_id,
+          establecimiento_id: est.id,
+          fiscal_status: est.fiscal_status,
+          nombre: est.nombre,
+          direccion: est.direccion || null,
+          telefono: est.telefono || null,
+          cod_estable_mh: est.cod_estable_mh || null,
+          cod_punto_venta_mh: est.cod_punto_venta_mh || null,
+          tipo_establecimiento: est.tipo_establecimiento || '02',
+          departamento_cod: est.departamento_cod || null,
+          municipio_cod: est.municipio_cod || null,
+        },
+      });
+      await audit({
+        tenant_id: tenantIdNorm,
+        evento: 'PROVISION_BRANCH_VINCULADO',
+        detalles: {
+          operation_id: operationIdBranch,
+          branch_id: est.branch_id,
+          establecimiento_id: est.id,
+          origen: 'habilitar_pos',
+        },
+        usuario_id: usuario?.id || null,
+        ip,
+        status_http: 201,
+      });
+    }
+
+    // Usuario inicial → POS (solo hashes bcrypt).
+    const operationIdUsuario = operationIdEventoAlta('USUARIO_INICIAL', tenantIdNorm);
+    await obtenerOutbox().publicarEvento({
+      operation_id: operationIdUsuario,
+      tenant_id: tenantIdNorm,
+      tipo_evento: 'USUARIO_INICIAL',
+      payload: {
+        nombre: admin.nombre,
+        apellido: null,
+        email: admin.email,
+        rol: 'administrador',
+        password_hash: admin.password_hash,
+        pin_hash: await bcryptImpl.hash(value.pin, BCRYPT_ROUNDS),
+      },
+    });
+
+    await audit({
+      tenant_id: tenantIdNorm,
+      evento: 'PROVISION_POS_HABILITADO',
+      detalles: {
+        operation_id: operationIdUsuario,
+        email: admin.email,
+        sucursales: establecimientos.length,
+        api_key_generada: !!apiKey,
+      },
+      usuario_id: usuario?.id || null,
+      ip,
+      status_http: 201,
+    });
+
+    logger.info('POS habilitado para tenant existente', {
+      tenant_id: tenantIdNorm,
+      sucursales: establecimientos.length,
+      api_key_generada: !!apiKey,
+      // NUNCA loguear la API Key ni el PIN.
+    });
+
+    return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: false, api_key: apiKey };
   };
 
   /**
@@ -1052,6 +1218,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     crearTenantDesdePlataforma,
     actualizarTenantDesdePlataforma,
     actualizarAdminDesdePlataforma,
+    habilitarPosTenant,
     obtenerEstadoFiscalTenant,
   };
 };

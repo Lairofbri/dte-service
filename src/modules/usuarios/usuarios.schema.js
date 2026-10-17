@@ -9,6 +9,10 @@
 
 const Joi = require('joi');
 
+// Roles válidos del sistema (multi-rol — migración 035).
+const ROLES_VALIDOS = ['administrador', 'operador', 'plataforma'];
+const mensajeRol = 'El rol debe ser administrador, operador o plataforma.';
+
 // ─────────────────────────────────────────────
 // VALIDADORES REUTILIZABLES
 // ─────────────────────────────────────────────
@@ -43,12 +47,23 @@ const crearUsuarioSchema = Joi.object({
       'string.pattern.base': 'El password debe tener entre 8 y 50 caracteres, al menos una mayúscula, una minúscula, un número y un carácter especial.',
       'any.required':        'El password es requerido.',
     }),
-  rol: Joi.string()
-    .valid('administrador', 'operador', 'plataforma')
-    .required()
+  // Multi-rol (migración 035): el usuario puede tener varios roles.
+  // `rol` se acepta por compatibilidad (se normaliza a `roles` en el service).
+  roles: Joi.array()
+    .items(Joi.string().valid(...ROLES_VALIDOS))
+    .min(1)
+    .unique()
+    .optional()
     .messages({
-      'any.only':     'El rol debe ser administrador, operador o plataforma.',
-      'any.required': 'El rol es requerido.',
+      'array.min':    'El usuario debe tener al menos un rol.',
+      'array.unique': 'No se puede repetir un rol.',
+      'any.only':     mensajeRol,
+    }),
+  rol: Joi.string()
+    .valid(...ROLES_VALIDOS)
+    .optional()
+    .messages({
+      'any.only': mensajeRol,
     }),
   // Desde 2026-10-07 es OPCIONAL (antes requerido): administradores de
   // tenants en provisión no tienen establecimientos todavía; la emisión
@@ -60,6 +75,8 @@ const crearUsuarioSchema = Joi.object({
     .messages({
       'string.uuid':  'El establecimiento_id debe ser un UUID válido.',
     }),
+}).or('roles', 'rol').messages({
+  'object.missing': 'El rol es requerido.',
 });
 
 /**
@@ -87,11 +104,21 @@ const actualizarUsuarioSchema = Joi.object({
     .messages({
       'string.pattern.base': 'El password debe tener entre 8 y 50 caracteres, al menos una mayúscula, una minúscula, un número y un carácter especial.',
     }),
-  rol: Joi.string()
-    .valid('administrador', 'operador', 'plataforma')
+  roles: Joi.array()
+    .items(Joi.string().valid(...ROLES_VALIDOS))
+    .min(1)
+    .unique()
     .optional()
     .messages({
-      'any.only': 'El rol debe ser administrador, operador o plataforma.',
+      'array.min':    'El usuario debe tener al menos un rol.',
+      'array.unique': 'No se puede repetir un rol.',
+      'any.only':     mensajeRol,
+    }),
+  rol: Joi.string()
+    .valid(...ROLES_VALIDOS)
+    .optional()
+    .messages({
+      'any.only': mensajeRol,
     }),
   establecimiento_id: Joi.string()
     .uuid()

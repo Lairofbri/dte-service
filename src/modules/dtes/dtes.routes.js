@@ -11,6 +11,7 @@ const { Router }           = require('express');
 const controller           = require('./dtes.controller');
 const { autenticarApiKey } = require('../../middlewares/apikey.middleware');
 const { autenticarDual }   = require('../../middlewares/jwt.middleware');
+const { puedeAdministrarTenant } = require('../../utils/roles');
 
 const router = Router();
 
@@ -23,7 +24,7 @@ router.use(autenticarDual);
 // del body (selector de sucursal, Fase C3), operador → fijo del JWT.
 // Si viene con API Key, req.establecimientoId queda undefined (sin filtro).
 router.use((req, res, next) => {
-  if (req.usuario?.rol !== 'administrador' && req.usuario?.establecimiento_id) {
+  if (!puedeAdministrarTenant(req.usuario) && req.usuario?.establecimiento_id) {
     req.establecimientoId = req.usuario.establecimiento_id;
   }
   next();

@@ -56,6 +56,7 @@ routerApi.use(autenticarJWT);
 routerApi.post('/tenants', idempotenciaObligatoria, controller.crearTenantDesdePlataforma);
 routerApi.patch('/tenants/:tenantId', controller.actualizarTenantDesdePlataforma);
 routerApi.patch('/tenants/:tenantId/admin', controller.actualizarAdminDesdePlataforma);
+routerApi.post('/tenants/:tenantId/habilitar-pos', controller.habilitarPosTenant);
 routerApi.get('/status', controller.listarEstadoProvision);
 
 module.exports = { routerInterno, routerApi };
