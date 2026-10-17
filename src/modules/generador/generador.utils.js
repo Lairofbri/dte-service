@@ -274,7 +274,11 @@ const construirReceptorFCF = (receptor) => ({
     // FCF v2 exige distrito (CAT-008) igual que CCF/NC/ND. Fallback legacy
     // mientras el POS no capture distrito (pendiente: alinear catálogos POS).
     distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
-    complemento:  receptor.direccion    || '',
+    // El esquema oficial exige complemento >= 1 caracter: sin calle se envía
+    // 'S/D' (sin dirección), igual que el receptor de FSE. Antes se enviaba ''
+    // y el DTE generaba un JSON que fallaba su propio validador (422
+    // «El DTE no cumple el esquema oficial de Hacienda»).
+    complemento:  receptor.direccion    || 'S/D',
   } : null,
   telefono:      receptor.telefono || null,
   correo:        receptor.correo   || null,
@@ -288,11 +292,14 @@ const construirReceptorCCF = (receptor) => ({
   codActividad:   receptor.cod_actividad    || null,
   descActividad:  receptor.desc_actividad   || null,
   nombreComercial: receptor.nombre_comercial || null,
-  direccion:      receptor.departamento_cod ? {
+  // El esquema CCF v4 exige `direccion` como objeto (no admite null) con
+  // complemento >= 1 caracter. La ubicación del receptor es obligatoria: si no
+  // viene, el DTE responde 422 (el POS la exige antes con un 400 accionable).
+  direccion: receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
     distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
-    complemento:  receptor.direccion    || '',
+    complemento:  receptor.direccion    || 'S/D',
   } : null,
   telefono: formatearTelefono(receptor.telefono) || null,
   correo:   receptor.correo || null,
@@ -307,11 +314,12 @@ const construirReceptorNCND = (receptor) => ({
   codActividad:    receptor.cod_actividad    || null,
   descActividad:   receptor.desc_actividad   || null,
   nombreComercial: receptor.nombre_comercial || null,
+  // Igual que CCF: `direccion` es objeto obligatorio con complemento >= 1.
   direccion: receptor.departamento_cod ? {
     departamento: receptor.departamento_cod,
     municipio:    receptor.municipio_cod || '20',
     distrito:     receptor.distrito_cod || receptor.municipio_cod || '20',
-    complemento:  receptor.direccion || '',
+    complemento:  receptor.direccion || 'S/D',
   } : null,
   telefono: formatearTelefono(receptor.telefono) || null,
   correo:   receptor.correo || null,
