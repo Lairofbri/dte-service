@@ -108,6 +108,11 @@ const camposPagoComunes = {
   // Formato frontend
   condicion_operacion:  Joi.number().integer().valid(1, 2, 3).optional().default(1),
   pagos:                Joi.array().items(pagoSchema).min(1).max(10).optional().allow(null),
+  // Origen POS: los precios del POS ya incluyen IVA. Para CCF/NC/ND (precio sin
+  // IVA en el esquema oficial) el POS convierte los importes a base y marca este
+  // flag, para que el resumen declare el IVA contenido y el total sea
+  // exactamente lo cobrado. El frontend DTE (precios netos) NO lo envía.
+  precios_con_iva:      Joi.boolean().optional().default(false),
   // Varios
   orden_referencia:     Joi.string().max(100).optional().allow('', null),
   // Fase 3 — clave idempotente (tenant + orden + tipo). Los reintentos

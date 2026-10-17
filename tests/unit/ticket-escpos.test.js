@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { resolverAncho, formatoTicketFiscal } = require('../../src/modules/impresion/ticket-fiscal');
-const { renderEscpos, codificarTexto } = require('../../src/modules/impresion/escpos');
+const { renderEscpos, codificarTexto, comandoQR } = require('../../src/modules/impresion/escpos');
 
 const QR_FISCAL = 'https://admin.factura.gob.sv/consultaPublica?ambiente=01&codGen=849F888E-0929-4947-89C3-BB61FDF55BCB&fechaEmi=2026-10-17';
 
@@ -139,7 +139,7 @@ test('no recalcula: imprime los totales del resumen aunque no coincidan con las 
   });
 
   const cuerpo = lineas(texto);
-  const lineaGravada = cuerpo.find((l) => l.includes('Gravada:'));
+  const lineaGravada = cuerpo.find((l) => l.includes('Gravada'));
   const lineaTotal = cuerpo.find((l) => l.includes('TOTAL OPERACION:'));
 
   assert.ok(lineaGravada, 'debe imprimir la gravada del resumen');
@@ -149,6 +149,47 @@ test('no recalcula: imprime los totales del resumen aunque no coincidan con las 
   // Desde los totales hacia abajo no puede aparecer el cálculo local (100.00).
   const totales = cuerpo.slice(cuerpo.indexOf(lineaGravada));
   assert.ok(!totales.some((l) => l.includes('100.00')), 'los totales no salen del cálculo local del ítem');
+});
+
+test('FCF: rotula la gravada con IVA incluido y muestra la base sin IVA (sin desbordar en 58 mm)', () => {
+  const texto = formatoTicketFiscal({ dte: dteDemo(), ancho: 42 });
+  const cuerpo = lineas(texto);
+
+  const gravada = cuerpo.find((l) => l.includes('Gravada (IVA incl.)'));
+  const base = cuerpo.find((l) => l.includes('Base sin IVA'));
+  const iva = cuerpo.find((l) => l.includes('IVA incluido (13%)'));
+
+  assert.ok(gravada && gravada.includes('25.25'), 'la gravada del FCF es el bruto con IVA');
+  assert.ok(iva && iva.includes('3.28'), 'el IVA contenido del FCF se muestra aparte');
+  assert.ok(base && base.includes('21.97'), 'base sin IVA = gravada − IVA');
+
+  for (const linea of lineas(formatoTicketFiscal({ dte: dteDemo(), ancho: 32 }))) {
+    assert.ok(linea.length <= 32, `58 mm: línea demasiado larga (${linea.length}): ${linea}`);
+  }
+});
+
+test('CCF: la gravada es la base sin IVA (sin filas extra) y el IVA va en el tributo', () => {
+  const texto = formatoTicketFiscal({
+    dte: dteDemo({
+      tipoDte: '03',
+      items: [{ numItem: 1, cantidad: 1, descripcion: 'Servicio', precioUni: 46.72, montoDescu: 0, ventaGravada: 46.72 }],
+      resumenExtra: {
+        totalGravada: 46.72,
+        subTotal: 46.72,
+        montoTotalOperacion: 52.79,
+        totalPagar: 52.79,
+        totalIva: undefined,
+        tributos: [{ codigo: '20', descripcion: 'Impuesto al Valor Agregado 13%', valor: 6.07 }],
+      },
+    }),
+    ancho: 42,
+  });
+
+  const cuerpo = lineas(texto);
+  assert.ok(cuerpo.some((l) => l.includes('Gravada (sin IVA)') && l.includes('46.72')));
+  assert.ok(!texto.includes('Base sin IVA'));
+  assert.ok(cuerpo.some((l) => l.includes('Impuesto al Valor Agregado 13%') && l.includes('6.07')));
+  assert.ok(cuerpo.some((l) => l.includes('TOTAL OPERACION') && l.includes('52.79')));
 });
 
 test('descripciones largas se reparten en varias líneas sin perder el importe', () => {
@@ -194,7 +235,7 @@ test('FSE usa su propio resumen (compra/retención) y no inventa IVA', () => {
   assert.ok(texto.includes('Retencion renta:'));
   assert.ok(texto.includes('TOTAL A PAGAR:'));
   assert.ok(/\$\s?450\.00/.test(texto));
-  assert.ok(!texto.includes('Gravada:'), 'FSE no imprime gravada/IVA');
+  assert.ok(!texto.includes('Gravada'), 'FSE no imprime gravada/IVA');
 });
 
 test('sello y QR solo aparecen cuando el DTE los aporta', () => {
@@ -224,6 +265,29 @@ test('el flujo ESC/POS arranca con ESC @, lleva el QR nativo con la URL fiscal y
   assert.ok(bytes.includes(Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31])));
 
   assert.deepEqual([...bytes.subarray(-3)], [0x1d, 0x56, 0x00], 'debe cortar el papel al final');
+});
+
+test('el QR se almacena con longitudes y orden correctos (GS ( k, cn=49, fn=80)', () => {
+  const qr = comandoQR(QR_FISCAL);
+  const datos = codificarTexto(QR_FISCAL);
+
+  const largoEsperado = datos.length + 3;
+  const almacenar = Buffer.from([
+    0x1d, 0x28, 0x6b,
+    largoEsperado & 0xff, (largoEsperado >> 8) & 0xff,
+    0x31, 0x50, 0x30,
+  ]);
+  assert.ok(qr.includes(almacenar), 'cabecera de almacenamiento con pL/pH correctos');
+
+  const inicio = qr.indexOf(almacenar) + almacenar.length;
+  assert.equal(qr.subarray(inicio, inicio + datos.length).toString('latin1'), QR_FISCAL);
+
+  const posModelo = qr.indexOf(Buffer.from([0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41]));
+  const posTamano = qr.indexOf(Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43]));
+  const posEcc = qr.indexOf(Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45]));
+  const posImprimir = qr.indexOf(Buffer.from([0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]));
+  assert.ok(posModelo < posTamano && posTamano < posEcc && posEcc < qr.indexOf(almacenar) && qr.indexOf(almacenar) < posImprimir);
+  assert.equal(posImprimir + 8, qr.length, 'el QR termina con el comando de impresión');
 });
 
 test('acentos y símbolos se codifican en PC850 (nunca como bytes inválidos)', () => {

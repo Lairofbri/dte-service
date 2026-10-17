@@ -218,7 +218,7 @@ const formatoTicketFiscal = ({ dte, ancho, papelMm, caracteresXLinea } = {}) => 
     for (const linea of descripcion) l.push(columnas.detalle(linea));
     const descuento = Number(item.montoDescu ?? item.descuento ?? 0);
     if (descuento > 0) l.push(columnas.detalle(`Descuento: ${moneda(descuento)}`));
-    if (item.ivaItem) l.push(columnas.detalle(`IVA: ${moneda(item.ivaItem)}`));
+    if (item.ivaItem) l.push(columnas.detalle(`IVA incluido: ${moneda(item.ivaItem)}`));
   }
 
   l.push(LINEA(ANCHO));
@@ -233,7 +233,20 @@ const formatoTicketFiscal = ({ dte, ancho, papelMm, caracteresXLinea } = {}) => 
   } else {
     if (Number(resumen.totalNoSuj || 0) > 0) l.push(filaMonto(' No sujeto:', Number(resumen.totalNoSuj), ANCHO));
     if (Number(resumen.totalExenta || 0) > 0) l.push(filaMonto(' Exenta:', Number(resumen.totalExenta), ANCHO));
-    if (Number(resumen.totalGravada || 0) > 0) l.push(filaMonto(' Gravada:', Number(resumen.totalGravada), ANCHO));
+    // En el FCF (01) el esquema oficial declara la gravada CON el IVA incluido
+    // (ventaGravada = bruto, como los FCF reales aceptados por Hacienda), así que
+    // se rotula y se muestra también la base sin IVA para que los importes se
+    // lean en orden. En CCF/NC/ND (03/05/06) la gravada YA es la base sin IVA.
+    const gravada = Number(resumen.totalGravada || 0);
+    const esFcf = tipoDte === '01';
+    if (gravada > 0) {
+      l.push(filaMonto(esFcf ? ' Gravada (IVA incl.):' : ' Gravada (sin IVA):', gravada, ANCHO));
+    }
+    const ivaIncluido = esFcf ? Number(resumen.totalIva || resumen.tributos?.[0]?.valor || 0) : 0;
+    if (gravada > 0 && ivaIncluido > 0) {
+      l.push(filaMonto(' Base sin IVA:', Math.round((gravada - ivaIncluido) * 100) / 100, ANCHO));
+      l.push(filaMonto(' IVA incluido (13%):', ivaIncluido, ANCHO));
+    }
     if (Number(resumen.totalDescu || 0) > 0) l.push(filaMonto(' Descuento:', Number(resumen.totalDescu), ANCHO));
     if (Number(resumen.subTotal || 0) > 0) l.push(filaMonto(' Subtotal:', Number(resumen.subTotal), ANCHO));
     for (const tributo of Array.isArray(resumen.tributos) ? resumen.tributos : []) {

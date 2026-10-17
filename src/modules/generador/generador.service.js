@@ -284,7 +284,9 @@ const generarCCF = async (datos) => {
     );
 
     const condicion = datos.condicion_operacion || 1;
-    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null);
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, null, {
+      preciosConIva: datos.precios_con_iva === true,
+    });
 
     // Pagos default para CCF
     if (!datos.pagos) {
@@ -420,7 +422,9 @@ const generarNotaCredito = async (datos) => {
     );
 
     const condicion = datos.condicion_operacion || 1;
-    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null);
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null, {
+      preciosConIva: datos.precios_con_iva === true,
+    });
 
     const docsRel = construirDocumentoRelacionado([datos.documento_relacionado]);
 
@@ -486,7 +490,9 @@ const generarNotaDebito = async (datos) => {
     );
 
     const condicion = datos.condicion_operacion || 1;
-    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null);
+    const resumen   = construirResumen(cuerpoDocumento, tipoDte, condicion, datos.pagos || null, datos.observaciones || null, {
+      preciosConIva: datos.precios_con_iva === true,
+    });
 
     const docsRel = construirDocumentoRelacionado([datos.documento_relacionado]);
 

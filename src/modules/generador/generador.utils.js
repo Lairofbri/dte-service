@@ -471,7 +471,7 @@ const construirDocumentoRelacionado = (docs) => {
 // ─────────────────────────────────────────────
 // SECCIÓN: RESUMEN
 // ─────────────────────────────────────────────
-const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, observaciones = null) => {
+const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, observaciones = null, opciones = {}) => {
   let totalNoSuj   = 0;
   let totalExenta  = 0;
   let totalGravada = 0;
@@ -493,7 +493,18 @@ const construirResumen = (items, tipoDte, condicionOperacion = 1, pagos = null, 
 
   let ivaValor = 0;
   if (tipoDte === '03' || tipoDte === '05' || tipoDte === '06') {
-    ivaValor = redondear2(baseIva * 0.13);
+    // POS con precios IVA-incluido (opciones.preciosConIva): el POS ya convirtió
+    // los ítems a base sin IVA, así que el IVA es el **contenido** en lo cobrado
+    // (IVA = cobrado − base). Así `base + IVA` es exactamente lo cobrado (los
+    // pagos fiscales cuadran al centavo) y coincide con la gravada/IVA que el POS
+    // ya declara en la orden. Sin el flag (frontend DTE, precios netos) se
+    // mantiene la fórmula histórica: IVA = base × 13%.
+    const cobrado = Array.isArray(pagos) && pagos.length > 0
+      ? redondear2(pagos.reduce((suma, pago) => suma + (Number(pago.montoPago) || 0), 0))
+      : null;
+    ivaValor = opciones.preciosConIva === true && cobrado !== null && cobrado > subTotal
+      ? redondear2(cobrado - subTotal)
+      : redondear2(baseIva * 0.13);
   } else if (tipoDte === '01') {
     ivaValor = redondear2(baseIva - (baseIva / 1.13));
   }
