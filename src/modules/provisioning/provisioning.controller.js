@@ -101,6 +101,16 @@ const obtenerEstadoFiscal = async (req, res) => {
   }
 };
 
+/** GET /internal/provisioning/tenants/:tenantId/empresa — ficha de empresa + sucursales (F1, sin secretos). */
+const obtenerEmpresa = async (req, res) => {
+  try {
+    const empresa = await service.obtenerEmpresaTenant({ tenantId: req.params.tenantId });
+    return exito(res, empresa);
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
 // ─────────────────────────────────────────────
 // RUTAS DE PLATAFORMA (JWT, rol plataforma)
 // ─────────────────────────────────────────────
@@ -254,6 +264,7 @@ module.exports = {
   vincularSucursal,
   confirmarEvento,
   obtenerEstadoFiscal,
+  obtenerEmpresa,
   crearTenantDesdePlataforma,
   actualizarTenantDesdePlataforma,
   actualizarAdminDesdePlataforma,

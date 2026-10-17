@@ -1135,6 +1135,95 @@ const crearServicioProvisioning = (dependencias = {}) => {
   };
 
   /**
+   * Ficha de EMPRESA para el POS (F1, 2026-10-16). El DTE es la única fuente de
+   * verdad de empresa/sucursal; el POS la consume server-a-servidor (clave
+   * interna `X-Internal-Api-Key`).
+   *
+   * Devuelve identidad fiscal + configuración (SIN secretos: solo booleanos de
+   * "configurada") + las sucursales (establecimientos). `es_principal` se
+   * deriva: el establecimiento más antiguo es la matriz (el DTE no tiene esa
+   * columna).
+   */
+  const obtenerEmpresaTenant = async ({ tenantId }) => {
+    const tenantIdNorm = String(tenantId).toLowerCase();
+
+    const { rows: tenants } = await obtenerDb().query(
+      `SELECT id, nombre, nombre_comercial, nit, nrc, activo,
+              provisioning_status, tiene_pos
+       FROM tenants WHERE id = $1`,
+      [tenantIdNorm]
+    );
+    if (tenants.length === 0) {
+      throw { status: 404, mensaje: 'Tenant no encontrado.' };
+    }
+    const t = tenants[0];
+
+    const { rows: configs } = await obtenerDb().query(
+      `SELECT direccion, telefono, email, correo,
+              codigo_actividad, desc_actividad, ambiente,
+              (usuario_hacienda IS NOT NULL AND password_hacienda IS NOT NULL) AS tiene_credenciales_hacienda,
+              (password_firma IS NOT NULL) AS password_firma_configurada
+       FROM configuracion WHERE tenant_id = $1`,
+      [tenantIdNorm]
+    );
+    const cfg = configs[0] || null;
+
+    const { rows: establecimientos } = await obtenerDb().query(
+      `SELECT id, branch_id, nombre, direccion, telefono, email, correo,
+              cod_estable_mh, cod_punto_venta_mh, cod_estable, cod_punto_venta,
+              tipo_establecimiento, departamento_cod, municipio_cod, distrito_cod,
+              fiscal_status, provisioning_status, activo, creado_en
+       FROM establecimientos
+       WHERE tenant_id = $1
+       ORDER BY creado_en ASC`,
+      [tenantIdNorm]
+    );
+
+    return {
+      tenant: {
+        id: t.id,
+        nombre: t.nombre,
+        nombre_comercial: t.nombre_comercial || null,
+        nit: t.nit,
+        nrc: t.nrc || null,
+        activo: !!t.activo,
+        provisioning_status: t.provisioning_status,
+        tiene_pos: !!t.tiene_pos,
+      },
+      configuracion: cfg ? {
+        direccion: cfg.direccion || null,
+        telefono: cfg.telefono || null,
+        email: cfg.email || cfg.correo || null,
+        codigo_actividad: cfg.codigo_actividad || null,
+        desc_actividad: cfg.desc_actividad || null,
+        ambiente: cfg.ambiente || null,
+        tiene_credenciales_hacienda: !!cfg.tiene_credenciales_hacienda,
+        password_firma_configurada: !!cfg.password_firma_configurada,
+      } : null,
+      establecimientos: establecimientos.map((e, i) => ({
+        id: e.id,
+        branch_id: e.branch_id || null,
+        nombre: e.nombre,
+        direccion: e.direccion || null,
+        telefono: e.telefono || null,
+        email: e.email || e.correo || null,
+        es_principal: i === 0,
+        activo: !!e.activo,
+        cod_estable_mh: e.cod_estable_mh || null,
+        cod_punto_venta_mh: e.cod_punto_venta_mh || null,
+        cod_estable: e.cod_estable || null,
+        cod_punto_venta: e.cod_punto_venta || null,
+        tipo_establecimiento: e.tipo_establecimiento || null,
+        departamento_cod: e.departamento_cod || null,
+        municipio_cod: e.municipio_cod || null,
+        distrito_cod: e.distrito_cod || null,
+        fiscal_status: e.fiscal_status,
+        provisioning_status: e.provisioning_status,
+      })),
+    };
+  };
+
+  /**
    * Solicita el vínculo fiscal de una sucursal POS (spec §6.3).
    *
    * Flujo:
@@ -1313,6 +1402,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     actualizarAdminDesdePlataforma,
     habilitarPosTenant,
     reintentarSincronizacionPos,
+    obtenerEmpresaTenant,
     obtenerEstadoFiscalTenant,
   };
 };

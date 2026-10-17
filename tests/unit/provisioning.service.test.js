@@ -844,6 +844,55 @@ test('reintentarSincronizacionPos re-publica TENANT_CREADO y reactiva los evento
   );
 });
 
+test('obtenerEmpresaTenant devuelve empresa + config (sin secretos) + sucursales', async () => {
+  const db = crearDbFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async () => {},
+    outbox: crearOutboxFake(),
+    validarUbicacion: async () => [],
+  });
+
+  await servicio.crearTenantDesdePlataforma({
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa F1',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      nombre_usuario: 'Admin Demo',
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+    },
+    operationId: OP2,
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+  db.setConfiguracion(TENANT2, {
+    direccion: 'Calle 1', telefono: '2222-2222', email: 'empresa@x.com',
+    codigo_actividad: '46510', desc_actividad: 'Venta',
+    ambiente: '00', tiene_credenciales_hacienda: true, password_firma_configurada: true,
+  });
+
+  const empresa = await servicio.obtenerEmpresaTenant({ tenantId: TENANT2 });
+
+  assert.equal(empresa.tenant.id, TENANT2);
+  assert.equal(empresa.tenant.nombre, 'Empresa F1');
+  assert.equal(empresa.tenant.nit, '0614-260967-201-7');
+  assert.equal(empresa.configuracion.tiene_credenciales_hacienda, true);
+  assert.equal(empresa.configuracion.password_firma_configurada, true);
+  assert.equal(empresa.establecimientos.length, 1);
+  assert.equal(empresa.establecimientos[0].es_principal, true, 'el establecimiento más antiguo es la matriz');
+
+  const texto = JSON.stringify(empresa);
+  ['usuario_hacienda', 'password_hacienda', 'token_hacienda', 'password_firma', 'password'].forEach((k) => {
+    assert.ok(!texto.includes(`"${k}"`), `no debe exponer la clave ${k}`);
+  });
+
+  await assert.rejects(
+    servicio.obtenerEmpresaTenant({ tenantId: TENANT }),
+    (err) => err.status === 404
+  );
+});
+
 test('habilitarPosTenant valida tenant inexistente y PIN inválido', async () => {
   const db = crearDbFake();
   const servicio = crearServicioProvisioning({

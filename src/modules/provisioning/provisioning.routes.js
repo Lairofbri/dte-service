@@ -45,6 +45,7 @@ routerInterno.post('/tenants', idempotenciaObligatoria, controller.crearTenant);
 routerInterno.patch('/tenants/:tenantId/status', idempotenciaObligatoria, controller.actualizarEstado);
 routerInterno.post('/tenants/:tenantId/branches', idempotenciaObligatoria, controller.vincularSucursal);
 routerInterno.get('/tenants/:tenantId/estado-fiscal', controller.obtenerEstadoFiscal);
+routerInterno.get('/tenants/:tenantId/empresa', controller.obtenerEmpresa);
 routerInterno.post('/events/:operationId/ack', controller.confirmarEvento);
 
 // ─────────────────────────────────────────────
