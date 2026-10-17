@@ -176,6 +176,8 @@ const emitirFSE = async (req, res) => {
   // El POS puede enviar sujeto_excluido, el frontend envía receptor
   const receptor = value.receptor || (value.sujeto_excluido ? {
     nit:            value.sujeto_excluido.nit,
+    tipo_documento: value.sujeto_excluido.tipo_documento,
+    num_documento:  value.sujeto_excluido.num_documento || value.sujeto_excluido.numero_documento,
     nombre:         value.sujeto_excluido.nombre,
     cod_actividad:  value.sujeto_excluido.cod_actividad || value.sujeto_excluido.codigo_actividad,
     desc_actividad: value.sujeto_excluido.desc_actividad,

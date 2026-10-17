@@ -166,11 +166,15 @@ const emitirCCFSchema = Joi.object({
 
 const emitirFSESchema = Joi.object({
   items: Joi.array().items(itemSchema).min(1).max(2000).required(),
-  // Acepta tanto receptor como sujeto_excluido (alias POS)
+  // Acepta tanto receptor como sujeto_excluido (alias POS).
+  // El sujeto excluido NO es empresa: se identifica con tipoDocumento +
+  // numDocumento (DUI/CAT-022) o con NIT — el esquema MH FSE v2 usa
+  // tipoDocumento/numDocumento, no nit.
   receptor: Joi.object({
-    nit:             Joi.string().pattern(nitRegex).required().messages({
-      'any.required': 'El NIT del sujeto excluido es requerido.',
-    }),
+    nit:             Joi.string().pattern(nitRegex).optional().allow('', null)
+      .messages({ 'string.pattern.base': 'El NIT debe tener formato 0000-000000-000-0.' }),
+    tipo_documento:  Joi.string().valid('13', '02', '03', '36', '37').optional().allow(null),
+    num_documento:   Joi.string().min(3).max(20).optional().allow('', null),
     nombre:          Joi.string().min(1).max(250).required(),
     cod_actividad:   Joi.string().min(5).max(6).optional().allow('', null),
     desc_actividad:  Joi.string().min(5).max(150).optional().allow('', null),
@@ -181,22 +185,38 @@ const emitirFSESchema = Joi.object({
     departamento_cod: Joi.string().length(2).optional().allow(null),
     municipio_cod:   Joi.string().length(2).optional().allow(null),
     distrito_cod:    Joi.string().length(2).optional().allow(null),
-  }).optional(),
+  }).custom((value, helpers) => {
+    if (!value.nit && !value.num_documento) {
+      return helpers.error('any.custom', {
+        message: 'El NIT o el número de documento (DUI) del sujeto excluido es requerido.',
+      });
+    }
+    return value;
+  }).messages({ 'any.custom': '{{#message}}' }).optional(),
   sujeto_excluido: Joi.object({
-    nit:              Joi.string().pattern(nitRegex).required(),
+    nit:              Joi.string().pattern(nitRegex).optional().allow('', null),
+    tipo_documento:   Joi.string().valid('13', '02', '03', '36', '37').optional().allow(null),
+    num_documento:    Joi.string().min(3).max(20).optional().allow('', null),
+    numero_documento: Joi.string().min(3).max(20).optional().allow('', null),
     nombre:           Joi.string().min(1).max(250).required(),
-    tipo_documento:   Joi.string().valid('13', '02', '03', '36', '37').optional().default('36'),
-    numero_documento: Joi.string().min(3).max(20).optional(),
     cod_actividad:    Joi.string().min(5).max(6).optional().allow('', null),
     codigo_actividad: Joi.string().min(5).max(6).optional().allow('', null),
     desc_actividad:   Joi.string().min(5).max(150).optional().allow('', null),
+    correo:           Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
     email:            Joi.string().email({ tlds: { allow: false } }).optional().allow('', null),
     telefono:         Joi.string().min(8).max(20).optional().allow('', null),
     direccion:        Joi.string().max(200).optional().allow('', null),
     departamento_cod: Joi.string().length(2).optional().allow(null),
     municipio_cod:    Joi.string().length(2).optional().allow(null),
     distrito_cod:     Joi.string().length(2).optional().allow(null),
-  }).optional(),
+  }).custom((value, helpers) => {
+    if (!value.nit && !(value.num_documento || value.numero_documento)) {
+      return helpers.error('any.custom', {
+        message: 'El NIT o el número de documento (DUI) del sujeto excluido es requerido.',
+      });
+    }
+    return value;
+  }).messages({ 'any.custom': '{{#message}}' }).optional(),
   observaciones: Joi.string().max(3000).optional().allow('', null),
   ...camposPagoComunes,
 });

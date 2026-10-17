@@ -36,18 +36,20 @@ const camposComunes = {
 // Usa superRefine para validar según tipo_cliente
 // ─────────────────────────────────────────────
 const crearClienteSchema = Joi.object({
-  tipo_cliente:  Joi.string().valid('natural', 'juridico').required().messages({
-    'any.required': 'El tipo de cliente es requerido (natural o juridico).',
-    'any.only':     'El tipo de cliente debe ser "natural" o "juridico".',
+  tipo_cliente:  Joi.string().valid('natural', 'juridico', 'sujeto_excluido').required().messages({
+    'any.required': 'El tipo de cliente es requerido (natural, juridico o sujeto_excluido).',
+    'any.only':     'El tipo de cliente debe ser "natural", "juridico" o "sujeto_excluido".',
   }),
   ...camposComunes,
 
-  // Persona natural (FCF)
+  // Identificación por documento (natural/sujeto excluido: DUI o NIT —
+  // documentos homologados. CAT-022: 36=NIT, 13=DUI, 37=Otro, 03=Pasaporte,
+  // 02=Carnet Residente)
   tipo_documento: Joi.string().valid('36', '13', '02', '03', '37')
     .optional().allow(null),
   num_documento:  Joi.string().min(3).max(30).optional().allow('', null),
 
-  // Jurídico (CCF / FSE)
+  // Identificación fiscal (jurídico y personas naturales contribuyentes)
   nit:            Joi.string().pattern(nitRegex).optional().allow('', null)
     .messages({ 'string.pattern.base': 'El NIT debe tener formato 0000-000000-000-0.' }),
   nrc:            Joi.string().pattern(nrcRegex).optional().allow('', null)
@@ -55,14 +57,23 @@ const crearClienteSchema = Joi.object({
   cod_actividad:  Joi.string().min(5).max(6).optional().allow('', null),
   desc_actividad: Joi.string().min(3).max(500).optional().allow('', null),
 }).custom((value, helpers) => {
-  // Jurídico: NIT obligatorio
+  // Jurídico: NIT obligatorio (una empresa no tiene DUI)
   if (value.tipo_cliente === 'juridico' && !value.nit) {
     return helpers.error('any.custom', {
       message: 'El NIT es obligatorio para clientes jurídicos (CCF/FSE).',
     });
   }
-  // Natural: al menos tipo o num de documento si se provee
-  if (value.tipo_cliente === 'natural' && value.num_documento && !value.tipo_documento) {
+  // Sujeto excluido: no es empresa → se identifica con DUI (FSE-14)
+  if (value.tipo_cliente === 'sujeto_excluido') {
+    if (!value.num_documento) {
+      return helpers.error('any.custom', {
+        message: 'El número de DUI es obligatorio para un sujeto excluido (FSE).',
+      });
+    }
+    if (!value.tipo_documento) value.tipo_documento = '13';
+  }
+  // Natural / sujeto excluido: al menos tipo o num de documento si se provee
+  if (value.num_documento && !value.tipo_documento) {
     return helpers.error('any.custom', {
       message: 'Si se provee el número de documento, debe indicar el tipo.',
     });
@@ -74,6 +85,9 @@ const crearClienteSchema = Joi.object({
 // Schema actualizar (todos opcionales excepto nombre)
 // ─────────────────────────────────────────────
 const actualizarClienteSchema = Joi.object({
+  // Permite convertir el cliente entre natural / jurídico / sujeto excluido.
+  tipo_cliente:    Joi.string().valid('natural', 'juridico', 'sujeto_excluido').optional()
+    .messages({ 'any.only': 'El tipo de cliente debe ser "natural", "juridico" o "sujeto_excluido".' }),
   nombre:          Joi.string().min(1).max(250).optional(),
   nombre_comercial: Joi.string().max(150).optional().allow('', null),
   tipo_documento:  Joi.string().valid('36', '13', '02', '03', '37').optional().allow(null),
@@ -96,7 +110,7 @@ const actualizarClienteSchema = Joi.object({
 // ─────────────────────────────────────────────
 const buscarClientesSchema = Joi.object({
   q:            Joi.string().min(1).max(100).optional(), // búsqueda general
-  tipo_cliente: Joi.string().valid('natural', 'juridico').optional(),
+  tipo_cliente: Joi.string().valid('natural', 'juridico', 'sujeto_excluido').optional(),
   pagina:       Joi.number().integer().min(1).optional().default(1),
   limite:       Joi.number().integer().min(1).max(50).optional().default(10),
 });

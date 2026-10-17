@@ -128,7 +128,9 @@ const obtenerClientePorId = async (id, tenant_id) => {
 // CREAR
 // ─────────────────────────────────────────────
 const crearCliente = async (datos, tenant_id) => {
-  if (datos.tipo_cliente === 'juridico' && datos.nit) {
+  // NIT duplicado: aplica a jurídicos y a personas naturales contribuyentes
+  // (el NIT de una persona natural también es único por tenant).
+  if (datos.nit) {
     let dupQuery, dupParams;
     if (tenant_id) {
       dupQuery = 'SELECT id FROM clientes WHERE nit = $1 AND tenant_id = $2 AND activo = true';
@@ -143,7 +145,8 @@ const crearCliente = async (datos, tenant_id) => {
     }
   }
 
-  if (datos.tipo_cliente === 'natural' && datos.num_documento) {
+  // Documento duplicado: personas naturales y sujetos excluidos (DUI/NIT)
+  if ((datos.tipo_cliente === 'natural' || datos.tipo_cliente === 'sujeto_excluido') && datos.num_documento) {
     let dupQuery, dupParams;
     if (tenant_id) {
       dupQuery = 'SELECT id FROM clientes WHERE num_documento = $1 AND tipo_documento = $2 AND tenant_id = $3 AND activo = true';
@@ -209,6 +212,29 @@ const crearCliente = async (datos, tenant_id) => {
 const actualizarCliente = async (id, datos, tenant_id) => {
   const clientePrevio = await obtenerClientePorId(id, tenant_id);
 
+  // Reglas cruzadas por tipo de cliente (mismo contrato que la creación):
+  // jurídico → NIT, sujeto excluido → DUI. Se evalúa el estado RESULTANTE
+  // (datos nuevos + previos) para permitir conversiones entre tipos.
+  const tipoResultante    = datos.tipo_cliente ?? clientePrevio.tipo_cliente;
+  const nitResultante     = 'nit' in datos ? datos.nit : clientePrevio.nit;
+  const numDocResultante  = 'num_documento' in datos ? datos.num_documento : clientePrevio.num_documento;
+  let   tipoDocResultante = 'tipo_documento' in datos ? datos.tipo_documento : clientePrevio.tipo_documento;
+
+  if (tipoResultante === 'juridico' && !nitResultante) {
+    throw { status: 400, mensaje: 'El NIT es obligatorio para clientes jurídicos (CCF/FSE).' };
+  }
+  if (tipoResultante === 'sujeto_excluido' && !numDocResultante) {
+    throw { status: 400, mensaje: 'El número de DUI es obligatorio para un sujeto excluido (FSE).' };
+  }
+  if (numDocResultante && !tipoDocResultante) {
+    if (tipoResultante === 'sujeto_excluido') {
+      tipoDocResultante = '13';
+      datos.tipo_documento = '13';
+    } else {
+      throw { status: 400, mensaje: 'Si se provee el número de documento, debe indicar el tipo.' };
+    }
+  }
+
   // Ubicación: validar la combinación resultante (datos nuevos + previos)
   // contra los catálogos oficiales CAT-013/CAT-008 (migración 034).
   if ('departamento_cod' in datos || 'municipio_cod' in datos || 'distrito_cod' in datos) {
@@ -235,6 +261,7 @@ const actualizarCliente = async (id, datos, tenant_id) => {
 
   // Construir SET dinámico solo con campos enviados
   const campos = [
+    'tipo_cliente',
     'nombre', 'nombre_comercial', 'tipo_documento', 'num_documento',
     'nit', 'nrc', 'cod_actividad', 'desc_actividad',
     'departamento_cod', 'municipio_cod', 'distrito_cod', 'direccion',

@@ -325,10 +325,12 @@ const construirReceptorNCND = (receptor) => ({
   correo:   receptor.correo || null,
 });
 
-// FSE: NIT obligatorio, estructura similar a FCF con tipoDocumento
+// FSE: sujeto excluido — tipoDocumento/numDocumento (DUI o NIT). El esquema
+// MH FSE v2 identifica al receptor con tipoDocumento/numDocumento; el NIT se
+// conserva como respaldo cuando no viene un documento explícito.
 const construirReceptorFSE = (receptor) => ({
-  tipoDocumento: '36',
-  numDocumento:  formatearNIT(receptor.nit),
+  tipoDocumento: receptor.tipo_documento || '36',
+  numDocumento:  receptor.num_documento  || formatearNIT(receptor.nit),
   nombre:        receptor.nombre,
   codActividad:  receptor.cod_actividad  || null,
   descActividad: receptor.desc_actividad || null,
