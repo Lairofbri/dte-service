@@ -72,6 +72,30 @@ const crearServicioProvisioning = (dependencias = {}) => {
     return outboxActual;
   };
 
+  // Entrega automática de la API Key de integración al POS (2026-10-17):
+  // inyectable (unit tests) y TOLERANTE a fallos — si el POS no responde, la
+  // operación no falla (el operador aún puede instalar la clave a mano).
+  let entregarApiKeyActual = null;
+  const obtenerEntregarApiKey = () => {
+    if (!entregarApiKeyActual) {
+      entregarApiKeyActual = dependencias.entregarApiKeyPos
+        || require('./pos-apikey.client').entregarApiKeyAlPos;
+    }
+    return entregarApiKeyActual;
+  };
+
+  const entregarApiKeySeguro = async ({ tenantId, apiKey }) => {
+    try {
+      return await obtenerEntregarApiKey()({ tenantId, apiKey });
+    } catch (err) {
+      logger.warn('No se pudo entregar la API Key al POS (se puede instalar a mano)', {
+        tenant_id: tenantId,
+        error: err.message,
+      });
+      return false;
+    }
+  };
+
   // Validador de ubicación CAT-012/013/008 — lazy e inyectable (unit tests).
   let validarUbicacionActual = null;
   const obtenerValidarUbicacion = () => {
@@ -132,16 +156,22 @@ const crearServicioProvisioning = (dependencias = {}) => {
         [apiKeyHash, tenant.id]
       );
       logger.info('API Key rotada en reintento de provisión', { tenant_id: tenant.id });
+
+      // Entrega automática al POS (tolerante a fallos).
+      const apiKeyEntregada = await entregarApiKeySeguro({ tenantId: tenant.id, apiKey });
+
       return {
         tenant: formatearTenant(tenant),
         api_key: apiKey,
         reentregada: true,
+        api_key_entregada_pos: apiKeyEntregada,
       };
     }
     return {
       tenant: formatearTenant(tenant),
       api_key: null,
       reentregada: false,
+      api_key_entregada_pos: null,
     };
   };
 
@@ -938,7 +968,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
 
     // Idempotencia: ya tiene POS → no se rota la clave ni se duplican eventos.
     if (tenant.tiene_pos) {
-      return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: true, api_key: null };
+      return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: true, api_key: null, api_key_entregada_pos: null };
     }
 
     // API Key técnica: se genera solo si no existe. Se devuelve UNA vez.
@@ -953,6 +983,13 @@ const crearServicioProvisioning = (dependencias = {}) => {
       'UPDATE tenants SET tiene_pos = TRUE, api_key_hash = $1, actualizado_en = NOW() WHERE id = $2',
       [apiKeyHash, tenantIdNorm]
     );
+
+    // Entrega automática de la clave al POS (2026-10-17): el operador ya no
+    // tiene que copiarla a mano. Tolerante a fallos: si el POS no la recibe,
+    // se devuelve igual en la respuesta para instalarla manualmente.
+    const apiKeyEntregada = apiKey
+      ? await entregarApiKeySeguro({ tenantId: tenantIdNorm, apiKey })
+      : null;
 
     // Asegurar la proyección del tenant en el POS ANTES de sucursal/usuario.
     // El alta desde DTE ya publica TENANT_CREADO, pero si ese evento nunca se
@@ -1049,6 +1086,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
         email: admin.email,
         sucursales: establecimientos.length,
         api_key_generada: !!apiKey,
+        api_key_entregada_pos: apiKeyEntregada,
       },
       usuario_id: usuario?.id || null,
       ip,
@@ -1062,7 +1100,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
       // NUNCA loguear la API Key ni el PIN.
     });
 
-    return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: false, api_key: apiKey };
+    return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: false, api_key: apiKey, api_key_entregada_pos: apiKeyEntregada };
   };
 
   /**

@@ -743,11 +743,13 @@ test('habilitarPosTenant habilita POS en una empresa "solo DTE": API Key, sucurs
   const db = crearDbFake();
   const auditoria = [];
   const outbox = crearOutboxFake();
+  const entregas = [];
   const servicio = crearServicioProvisioning({
     db,
     auditoria: async (entrada) => { auditoria.push(entrada); },
     outbox,
     validarUbicacion: async () => [],
+    entregarApiKeyPos: async ({ tenantId, apiKey }) => { entregas.push({ tenantId, apiKey }); return true; },
   });
 
   // Alta "solo DTE" (sin toggle POS): sin API Key, sin eventos de POS.
@@ -789,6 +791,12 @@ test('habilitarPosTenant habilita POS en una empresa "solo DTE": API Key, sucurs
   assert.ok(!JSON.stringify(usuarioEvento).includes('123456'), 'el PIN en claro NUNCA viaja al POS');
   assert.ok(!JSON.stringify(auditoria).includes(resultado.api_key), 'la auditoría no expone la API Key');
 
+  // Entrega automática al POS (2026-10-17): el operador ya no la copia a mano.
+  assert.equal(resultado.api_key_entregada_pos, true, 'la clave viaja sola al POS');
+  assert.equal(entregas.length, 1);
+  assert.equal(entregas[0].tenantId, TENANT2);
+  assert.equal(entregas[0].apiKey, resultado.api_key, 'se entrega exactamente la clave generada');
+
   // Idempotente: ya habilitado → no rota la clave ni reentrega eventos.
   const repetido = await servicio.habilitarPosTenant({
     tenantId: TENANT2,
@@ -797,6 +805,42 @@ test('habilitarPosTenant habilita POS en una empresa "solo DTE": API Key, sucurs
   });
   assert.equal(repetido.ya_habilitado, true);
   assert.equal(repetido.api_key, null);
+});
+
+test('habilitarPosTenant NO falla si el POS no recibe la API Key (instalación manual disponible)', async () => {
+  const db = crearDbFake();
+  const outbox = crearOutboxFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async () => {},
+    outbox,
+    validarUbicacion: async () => [],
+    entregarApiKeyPos: async () => { throw new Error('POS inalcanzable'); },
+  });
+
+  await servicio.crearTenantDesdePlataforma({
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa Solo DTE',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      nombre_usuario: 'Admin Demo',
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+    },
+    operationId: OP2,
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+
+  const resultado = await servicio.habilitarPosTenant({
+    tenantId: TENANT2,
+    datos: { pin: '123456' },
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+
+  assert.equal(resultado.tiene_pos, true, 'la habilitación se completa igual');
+  assert.equal(resultado.api_key_entregada_pos, false, 'se avisa que no se pudo entregar');
+  assert.ok(resultado.api_key, 'la clave sigue disponible para instalarla a mano');
 });
 
 test('reintentarSincronizacionPos re-publica TENANT_CREADO y reactiva los eventos fallidos', async () => {
