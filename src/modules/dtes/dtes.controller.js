@@ -8,6 +8,8 @@
 // → UUID validado en todos los params antes de llamar al service
 
 const service = require('./dtes.service');
+const { formatoTicketFiscal, resolverAncho } = require('../impresion/ticket-fiscal');
+const { renderEscpos } = require('../impresion/escpos');
 const {
   emitirFCFSchema,
   emitirCCFSchema,
@@ -300,6 +302,68 @@ const obtenerDTE = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/dte/:codigoGeneracion/ticket-escpos?papel_mm=80&caracteres_x_linea=42
+ * Devuelve el comprobante fiscal en **bytes ESC/POS** para el agente local.
+ * No imprime ni modifica nada: solo lee lo ya persistido (la impresión es
+ * idempotente respecto de la emisión, verificar.txt §5/§10).
+ * El ancho lo aporta el agente (preferencia por equipo); por defecto, 80 mm.
+ * Rechaza con **409** un DTE que no esté `aceptado` (nunca se imprime como
+ * fiscal un documento sin confirmación de Hacienda, §6.2).
+ */
+const PAPELES_VALIDOS = [58, 80];
+
+const ticketEscpos = async (req, res) => {
+  const { codigoGeneracion } = req.params;
+
+  if (!esUuidValido(codigoGeneracion)) {
+    return error(res, 'El código de generación no tiene un formato UUID válido.', 400);
+  }
+
+  const papelMm = req.query.papel_mm === undefined || req.query.papel_mm === ''
+    ? undefined
+    : Number(req.query.papel_mm);
+  if (papelMm !== undefined && !PAPELES_VALIDOS.includes(papelMm)) {
+    return error(res, 'papel_mm debe ser 58 u 80.', 400);
+  }
+
+  const caracteres = req.query.caracteres_x_linea === undefined || req.query.caracteres_x_linea === ''
+    ? undefined
+    : Number(req.query.caracteres_x_linea);
+  if (caracteres !== undefined && (!Number.isInteger(caracteres) || caracteres < 20 || caracteres > 80)) {
+    return error(res, 'caracteres_x_linea debe ser un entero entre 20 y 80.', 400);
+  }
+
+  try {
+    const dte = await service.obtenerDTE({
+      codigoGeneracion,
+      establecimientoId: req.establecimientoId,
+      tenant_id: obtenerTenantAutenticado(req),
+    });
+
+    if (dte.estado !== 'aceptado') {
+      return error(res, `El DTE no puede imprimirse como fiscal porque está en estado "${dte.estado}".`, 409);
+    }
+
+    const ancho = resolverAncho(papelMm, caracteres);
+    const texto = formatoTicketFiscal({ dte, ancho });
+    const bytes = renderEscpos({ texto, qrUrl: dte.qr_url || null });
+
+    logger.info('Ticket fiscal ESC/POS generado', {
+      codigo_generacion: codigoGeneracion,
+      ancho,
+      bytes: bytes.length,
+    });
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'inline; filename="ticket-fiscal-escpos.bin"');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(bytes);
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
 module.exports = {
   emitirFCF,
   emitirCCF,
@@ -309,6 +373,7 @@ module.exports = {
   anularDTE,
   listarDTEs,
   obtenerDTE,
+  ticketEscpos,
   // Fase C3 — resolución del establecimiento de emisión (test unitario).
   resolverEstablecimientoId,
 };

@@ -47,6 +47,8 @@ router.post('/anular', controller.anularDTE);
 
 // Listado y consulta
 router.get('/',                      controller.listarDTEs);
+// Ticket térmico (bytes ESC/POS) del comprobante fiscal — Fase E
+router.get('/:codigoGeneracion/ticket-escpos', controller.ticketEscpos);
 router.get('/:codigoGeneracion',     controller.obtenerDTE);
 
 module.exports = router;
