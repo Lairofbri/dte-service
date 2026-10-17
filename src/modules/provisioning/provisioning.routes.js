@@ -57,6 +57,7 @@ routerApi.post('/tenants', idempotenciaObligatoria, controller.crearTenantDesdeP
 routerApi.patch('/tenants/:tenantId', controller.actualizarTenantDesdePlataforma);
 routerApi.patch('/tenants/:tenantId/admin', controller.actualizarAdminDesdePlataforma);
 routerApi.post('/tenants/:tenantId/habilitar-pos', controller.habilitarPosTenant);
+routerApi.post('/tenants/:tenantId/reintentar-sync', controller.reintentarSincronizacionPos);
 routerApi.get('/status', controller.listarEstadoProvision);
 
 module.exports = { routerInterno, routerApi };

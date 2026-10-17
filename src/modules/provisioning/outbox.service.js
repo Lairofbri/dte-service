@@ -155,8 +155,7 @@ const procesarOutbox = async ({ limite = 10 } = {}) => {
  * Confirma un evento desde el endpoint de ack del POS.
  * Idempotente: re-confirmar un evento ya confirmado es un no-op.
  */
-const confirmarEvento = async ({ operation_id }) => {
-  const { rows } = await query(
+const confirmarEvento = async ({ operation_id }) => {  const { rows } = await query(
     `UPDATE eventos_provision
      SET estado = 'confirmado', confirmado_en = NOW(),
          ultimo_error = NULL, actualizado_en = NOW()
@@ -224,10 +223,36 @@ const detenerWorker = () => {
   }
 };
 
+/**
+ * Reactiva los eventos de provisión FALLIDOS de un tenant.
+ * Pasa `estado='fallido'` → `'pendiente'` con `intentos=0` para que el worker
+ * reintente la cadena completa (TENANT_CREADO → BRANCH_VINCULADO →
+ * USUARIO_INICIAL). Se usa cuando el POS estuvo caído o mal configurado y la
+ * proyección quedó incompleta (ej: la empresa no aparecía en el POS).
+ *
+ * Devuelve cuántos eventos quedaron reactivados.
+ */
+const reactivarEventosTenant = async (tenantId) => {
+  const tenantIdNorm = String(tenantId).toLowerCase();
+  const { rowCount } = await query(
+    `UPDATE eventos_provision
+     SET estado = 'pendiente', intentos = 0, ultimo_error = NULL,
+         proximo_reintento_en = NOW(), actualizado_en = NOW()
+     WHERE tenant_id = $1 AND estado = 'fallido'`,
+    [tenantIdNorm]
+  );
+  const reactivados = rowCount || 0;
+  if (reactivados > 0) {
+    logger.info('Eventos de provisión reactivados', { tenant_id: tenantIdNorm, eventos: reactivados });
+  }
+  return reactivados;
+};
+
 module.exports = {
   publicarEvento,
   procesarOutbox,
   confirmarEvento,
+  reactivarEventosTenant,
   iniciarWorker,
   detenerWorker,
 };

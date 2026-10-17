@@ -954,6 +954,30 @@ const crearServicioProvisioning = (dependencias = {}) => {
       [apiKeyHash, tenantIdNorm]
     );
 
+    // Asegurar la proyección del tenant en el POS ANTES de sucursal/usuario.
+    // El alta desde DTE ya publica TENANT_CREADO, pero si ese evento nunca se
+    // entregó (POS caído / clave interna no configurada al crear la empresa)
+    // el POS no tiene el tenant y BRANCH/USUARIO fallarían con 409. Publicar es
+    // idempotente (ON CONFLICT por operation_id + tipo_evento).
+    await obtenerOutbox().publicarEvento({
+      operation_id: tenant.provisioning_operation_id || operationIdEventoAlta('TENANT_CREADO', tenantIdNorm),
+      tenant_id: tenantIdNorm,
+      tipo_evento: 'TENANT_CREADO',
+      payload: {
+        nombre: tenant.nombre,
+        nombre_comercial: tenant.nombre_comercial || null,
+        nit: tenant.nit,
+        nrc: tenant.nrc || null,
+      },
+    });
+
+    // Reactivar eventos fallidos previos para que el worker reintente la cadena
+    // completa (si el POS estuvo caído, TENANT_CREADO quedó en 'fallido' y el
+    // POS nunca proyectó la empresa).
+    if (typeof obtenerOutbox().reactivarEventosTenant === 'function') {
+      await obtenerOutbox().reactivarEventosTenant(tenantIdNorm);
+    }
+
     // Sucursales existentes → BRANCH_VINCULADO (proyección operativa en POS).
     const { rows: establecimientos } = await obtenerDb().query(
       `SELECT id, branch_id, nombre, direccion, telefono, cod_estable_mh,
@@ -1039,6 +1063,75 @@ const crearServicioProvisioning = (dependencias = {}) => {
     });
 
     return { tenant_id: tenantIdNorm, tiene_pos: true, ya_habilitado: false, api_key: apiKey };
+  };
+
+  /**
+   * Reintenta la sincronización POS de un tenant (2026-10-16).
+   *
+   * Caso de uso: la empresa existe en DTE pero NO aparece en el POS porque el
+   * evento `TENANT_CREADO` (o los siguientes) quedaron en estado `fallido`
+   * (POS caído o clave interna sin configurar al crear la empresa).
+   *
+   * Acciones:
+   *   1. Re-publica `TENANT_CREADO` (idempotente) para garantizar la
+   *      proyección del tenant en el POS.
+   *   2. Reactiva los eventos `fallido` del tenant (estado → `pendiente`,
+   *      intentos = 0) para que el worker reintente la cadena completa.
+   *
+   * No genera/rota la API Key ni crea usuarios: solo destraba la entrega.
+   */
+  const reintentarSincronizacionPos = async ({ tenantId, usuario = null, ip = null }) => {
+    const tenantIdNorm = String(tenantId).toLowerCase();
+
+    const { rows: tenants } = await obtenerDb().query(
+      `SELECT id, nombre, nit, nrc, nombre_comercial, provisioning_operation_id,
+              tiene_pos, activo
+       FROM tenants WHERE id = $1`,
+      [tenantIdNorm]
+    );
+    if (tenants.length === 0) {
+      throw { status: 404, mensaje: 'Tenant no encontrado.' };
+    }
+    const tenant = tenants[0];
+    if (!tenant.activo) {
+      throw { status: 409, mensaje: 'El tenant está inactivo.' };
+    }
+
+    await obtenerOutbox().publicarEvento({
+      operation_id: tenant.provisioning_operation_id || operationIdEventoAlta('TENANT_CREADO', tenantIdNorm),
+      tenant_id: tenantIdNorm,
+      tipo_evento: 'TENANT_CREADO',
+      payload: {
+        nombre: tenant.nombre,
+        nombre_comercial: tenant.nombre_comercial || null,
+        nit: tenant.nit,
+        nrc: tenant.nrc || null,
+      },
+    });
+
+    const eventosReactivados = typeof obtenerOutbox().reactivarEventosTenant === 'function'
+      ? await obtenerOutbox().reactivarEventosTenant(tenantIdNorm)
+      : 0;
+
+    await audit({
+      tenant_id: tenantIdNorm,
+      evento: 'PROVISION_SYNC_REINTENTADO',
+      detalles: { eventos_reactivados: eventosReactivados, tiene_pos: !!tenant.tiene_pos },
+      usuario_id: usuario?.id || null,
+      ip,
+      status_http: 200,
+    });
+
+    logger.info('Sincronización POS reintentada', {
+      tenant_id: tenantIdNorm,
+      eventos_reactivados: eventosReactivados,
+    });
+
+    return {
+      tenant_id: tenantIdNorm,
+      tiene_pos: !!tenant.tiene_pos,
+      eventos_reactivados: eventosReactivados,
+    };
   };
 
   /**
@@ -1219,6 +1312,7 @@ const crearServicioProvisioning = (dependencias = {}) => {
     actualizarTenantDesdePlataforma,
     actualizarAdminDesdePlataforma,
     habilitarPosTenant,
+    reintentarSincronizacionPos,
     obtenerEstadoFiscalTenant,
   };
 };

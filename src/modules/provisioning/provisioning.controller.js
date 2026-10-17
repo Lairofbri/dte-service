@@ -204,6 +204,30 @@ const habilitarPosTenant = async (req, res) => {
 // ESTADO VISIBLE AL ADMINISTRADOR DTE
 // ─────────────────────────────────────────────
 
+/** POST /api/provisioning/tenants/:tenantId/reintentar-sync — destrabar la entrega al POS. */
+const reintentarSincronizacionPos = async (req, res) => {
+  if (!req.usuario || !req.usuario.tenant_id) {
+    return noAutenticado(res, 'Autenticación de usuario requerida.');
+  }
+  if (!puedeAdministrarTenant(req.usuario)) {
+    return sinPermiso(res, 'Solo administradores o usuarios de plataforma pueden reintentar la sincronización.');
+  }
+  // Un administrador solo puede reintentar SU tenant; plataforma, cualquiera.
+  if (!tieneRol(req.usuario, 'plataforma') && req.params.tenantId !== req.usuario.tenant_id) {
+    return sinPermiso(res, 'Solo podés reintentar la sincronización de tu propia empresa.');
+  }
+  try {
+    const resultado = await service.reintentarSincronizacionPos({
+      tenantId: req.params.tenantId,
+      usuario: req.usuario,
+      ip: req.ip,
+    });
+    return exito(res, resultado, 'Sincronización con el POS reintentada.');
+  } catch (err) {
+    return manejarError(res, err);
+  }
+};
+
 /** GET /api/provisioning/status — estado de onboarding. */
 const listarEstadoProvision = async (req, res) => {
   if (!req.usuario || !req.usuario.tenant_id) {
@@ -234,5 +258,6 @@ module.exports = {
   actualizarTenantDesdePlataforma,
   actualizarAdminDesdePlataforma,
   habilitarPosTenant,
+  reintentarSincronizacionPos,
   listarEstadoProvision,
 };

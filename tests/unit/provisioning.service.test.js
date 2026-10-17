@@ -381,12 +381,16 @@ const ESTABLECIMIENTO_INICIAL = {
 // el ON CONFLICT de eventos_provision.
 const crearOutboxFake = () => {
   const mapa = new Map();
+  let reactivadosSimulados = 0;
   return {
     eventos: () => [...mapa.values()],
     publicarEvento: async (evento) => {
       const clave = `${evento.operation_id}|${evento.tipo_evento}`;
       if (!mapa.has(clave)) mapa.set(clave, evento);
     },
+    // Simula la reactivación de eventos fallidos (outbox real).
+    reactivarEventosTenant: async () => reactivadosSimulados,
+    setReactivados: (n) => { reactivadosSimulados = n; },
   };
 };
 
@@ -776,6 +780,7 @@ test('habilitarPosTenant habilita POS en una empresa "solo DTE": API Key, sucurs
   assert.equal(db.obtener(TENANT2).tiene_pos, true);
 
   const eventos = outbox.eventos();
+  assert.ok(eventos.some((e) => e.tipo_evento === 'TENANT_CREADO'), 'asegura la proyección del tenant (TENANT_CREADO)');
   assert.ok(eventos.some((e) => e.tipo_evento === 'BRANCH_VINCULADO'), 'proyecta la sucursal existente');
   const usuarioEvento = eventos.find((e) => e.tipo_evento === 'USUARIO_INICIAL');
   assert.ok(usuarioEvento, 'proyecta el usuario POS');
@@ -792,6 +797,51 @@ test('habilitarPosTenant habilita POS en una empresa "solo DTE": API Key, sucurs
   });
   assert.equal(repetido.ya_habilitado, true);
   assert.equal(repetido.api_key, null);
+});
+
+test('reintentarSincronizacionPos re-publica TENANT_CREADO y reactiva los eventos fallidos', async () => {
+  const db = crearDbFake();
+  const auditoria = [];
+  const outbox = crearOutboxFake();
+  const servicio = crearServicioProvisioning({
+    db,
+    auditoria: async (entrada) => { auditoria.push(entrada); },
+    outbox,
+    validarUbicacion: async () => [],
+  });
+
+  await servicio.crearTenantDesdePlataforma({
+    datos: {
+      tenant_id: TENANT2,
+      nombre: 'Empresa Solo DTE',
+      nit: '0614-260967-201-7',
+      email_admin: 'admin@demo.sv',
+      password: 'ClaveInicial123!',
+      nombre_usuario: 'Admin Demo',
+      establecimiento: ESTABLECIMIENTO_INICIAL,
+    },
+    operationId: OP2,
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+  outbox.setReactivados(2);
+
+  const resultado = await servicio.reintentarSincronizacionPos({
+    tenantId: TENANT2,
+    usuario: { id: 'u1', roles: ['plataforma'] },
+  });
+
+  assert.equal(resultado.tenant_id, TENANT2);
+  assert.equal(resultado.eventos_reactivados, 2);
+  assert.ok(
+    outbox.eventos().some((e) => e.tipo_evento === 'TENANT_CREADO'),
+    're-publica TENANT_CREADO para asegurar la proyección en el POS'
+  );
+  assert.ok(auditoria.some((a) => a.evento === 'PROVISION_SYNC_REINTENTADO'));
+
+  await assert.rejects(
+    servicio.reintentarSincronizacionPos({ tenantId: TENANT }),
+    (err) => err.status === 404
+  );
 });
 
 test('habilitarPosTenant valida tenant inexistente y PIN inválido', async () => {
